@@ -421,19 +421,38 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def allow_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Toggle allow-all-tools mode (skip per-request permission prompts)."""
+    """Toggle allow-all-tools mode (skip per-request permission prompts). Alias: /yolo"""
     if not await security_check(update): return
     service.allow_all_tools = not service.allow_all_tools
     if service.allow_all_tools:
         await update.message.reply_text(
             "✅ Allow All Tools: ENABLED\n"
-            "All tool permissions are auto-approved. Use /allowall again to restore prompts."
+            "All tool permissions are auto-approved.\n"
+            "Use /allow_all or /yolo again to restore prompts, or /reset_allowed_tools to disable."
         )
     else:
         await update.message.reply_text(
             "🔒 Allow All Tools: DISABLED\n"
             "Per-request permission prompts restored."
         )
+
+
+async def yolo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Alias for /allow_all — toggle allow-all-tools mode."""
+    await allow_all_command(update, context)
+
+
+async def reset_allowed_tools_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset allowed tools — explicitly disables allow-all mode."""
+    if not await security_check(update): return
+    if not service.allow_all_tools:
+        await update.message.reply_text("ℹ️ Allow All Tools is already disabled — no change.")
+        return
+    service.allow_all_tools = False
+    await update.message.reply_text(
+        "🔒 Allowed Tools Reset.\n"
+        "Per-request permission prompts restored."
+    )
 
 
 async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

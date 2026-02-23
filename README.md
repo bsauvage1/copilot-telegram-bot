@@ -157,7 +157,8 @@ After selecting a project, a **cockpit message** appears with:
 | `/changelog` | Generate a changelog entry from recent git commits. |
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/ping` | Check CLI connectivity and measure latency. |
-| `/allowall` | Bypass tool permission prompts (allow all tools automatically). |
+| `/allow_all` | Toggle (on/off) allow-all-tools mode — bypasses per-tool permission prompts. Alias: `/yolo`. |
+| `/reset_allowed_tools` | Explicitly disable allow-all and restore per-tool permission prompts. |
 | `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. Long responses auto-paginate. |
 | `/update` | Update the Copilot CLI binary. |
 

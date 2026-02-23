@@ -19,6 +19,7 @@ from src.handlers.commands import (
     model_command, share_command, cancel_command,
     session_command,
     diff_command, instructions_command, update_command, allow_all_command,
+    yolo_command, reset_allowed_tools_command,
     effort_command, sessions_command, infinite_command, ping_command,
     compact_command, review_command, changelog_command, streamer_mode_command,
     build_main_menu
@@ -52,7 +53,9 @@ async def setup_bot_commands(application):
         BotCommand("context", "Display model context info"),
         BotCommand("session", "Show session info & workspace summary"),
         BotCommand("infinite", "Toggle infinite sessions (auto-compaction)"),
-        BotCommand("allowall", "Toggle allow-all-tools mode"),
+        BotCommand("allow_all", "Toggle allow-all-tools mode (alias: /yolo)"),
+        BotCommand("yolo", "Alias for /allow_all"),
+        BotCommand("reset_allowed_tools", "Disable allow-all-tools mode"),
         BotCommand("diff", "Show git diff"),
         BotCommand("review", "AI code review of current diff"),
         BotCommand("changelog", "Generate changelog from git log"),
@@ -147,7 +150,10 @@ def main():
     app.add_handler(CommandHandler("diff", diff_command))
     app.add_handler(CommandHandler("instructions", instructions_command))
     app.add_handler(CommandHandler("update", update_command))
-    app.add_handler(CommandHandler("allowall", allow_all_command))
+    app.add_handler(CommandHandler("allow_all", allow_all_command))
+    app.add_handler(CommandHandler("allowall", allow_all_command))  # legacy alias
+    app.add_handler(CommandHandler("yolo", yolo_command))
+    app.add_handler(CommandHandler("reset_allowed_tools", reset_allowed_tools_command))
     app.add_handler(CommandHandler("effort", effort_command))
     app.add_handler(CommandHandler("sessions", sessions_command))
     app.add_handler(CommandHandler("infinite", infinite_command))
