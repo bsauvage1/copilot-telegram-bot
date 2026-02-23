@@ -455,6 +455,50 @@ async def reset_allowed_tools_command(update: Update, context: ContextTypes.DEFA
     )
 
 
+_MODE_LABELS = {
+    "interactive": "💬 Interactive",
+    "plan":        "📋 Plan",
+    "autopilot":   "🚀 Autopilot",
+}
+_MODE_DESCRIPTIONS = {
+    "interactive": "Standard chat — Copilot responds and waits for your next message.",
+    "plan":        "Planning only — Copilot outlines steps but won't execute tools or write files.",
+    "autopilot":   "Autonomous — Copilot chains steps and executes without waiting between actions.",
+}
+
+
+async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show mode picker: Interactive / Plan / Autopilot (maps to session.mode.set)."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    # Read current mode if session is active
+    current = "interactive"
+    if service.session:
+        try:
+            resp = await service.client._client.request(
+                "session.mode.get", {"sessionId": service.session.session_id}
+            )
+            current = resp.get("mode", "interactive")
+        except Exception:
+            pass
+
+    label = _MODE_LABELS.get(current, current)
+    buttons = [
+        [InlineKeyboardButton(
+            f"{'✅ ' if m == current else ''}{_MODE_LABELS[m]}",
+            callback_data=f"mode:{m}"
+        )]
+        for m in ("interactive", "plan", "autopilot")
+    ]
+    await update.message.reply_text(
+        f"🤖 Agent Mode — currently: {label}\n\n"
+        + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
 async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set reasoning effort level for models that support it."""
     if not await security_check(update): return

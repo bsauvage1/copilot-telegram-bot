@@ -326,6 +326,40 @@ async def _handle_granted_project_callback(query, context):
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
 
+async def _handle_mode_callback(query, context):
+    """Handle /autopilot mode picker button taps."""
+    from src.handlers.commands import _MODE_LABELS, _MODE_DESCRIPTIONS
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    mode = query.data.split(":", 1)[1]  # e.g. "mode:autopilot" → "autopilot"
+    if not service.session:
+        await query.edit_message_text("⚠️ No active session — select a project first.")
+        return
+    try:
+        resp = await service.client._client.request(
+            "session.mode.set",
+            {"sessionId": service.session.session_id, "mode": mode}
+        )
+        active_mode = resp.get("mode", mode)
+    except Exception as e:
+        logger.error(f"mode.set failed: {e}")
+        await query.edit_message_text(f"⚠️ Failed to set mode: {e}")
+        return
+
+    label = _MODE_LABELS.get(active_mode, active_mode)
+    buttons = [
+        [InlineKeyboardButton(
+            f"{'✅ ' if m == active_mode else ''}{_MODE_LABELS[m]}",
+            callback_data=f"mode:{m}"
+        )]
+        for m in ("interactive", "plan", "autopilot")
+    ]
+    await query.edit_message_text(
+        f"🤖 Agent Mode — currently: {label}\n\n"
+        + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
 async def _handle_streamer_reset_callback(query, context):
     """Reset session when user taps the 'Reset session now' button in /streamer_mode."""
     context.user_data['plan_mode'] = False
@@ -355,6 +389,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         elif data.startswith("diff:"):
             await _handle_diff_callback(query, context)
+        elif data.startswith("mode:"):
+            await _handle_mode_callback(query, context)
         elif data == "streamer:reset":
             await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):

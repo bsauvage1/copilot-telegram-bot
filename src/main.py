@@ -22,6 +22,7 @@ from src.handlers.commands import (
     yolo_command, reset_allowed_tools_command,
     effort_command, sessions_command, infinite_command, ping_command,
     compact_command, review_command, changelog_command, streamer_mode_command,
+    autopilot_command,
     build_main_menu
 )
 from src.handlers.messages import chat_handler
@@ -65,6 +66,7 @@ async def setup_bot_commands(application):
         BotCommand("ping", "Check CLI connection status"),
         BotCommand("update", "Update Copilot CLI"),
         BotCommand("streamer_mode", "Toggle live token streaming"),
+        BotCommand("autopilot", "Switch agent mode: Interactive / Plan / Autopilot"),
     ]
     try:
         # Set bot commands
@@ -162,6 +164,7 @@ def main():
     app.add_handler(CommandHandler("review", review_command))
     app.add_handler(CommandHandler("changelog", changelog_command))
     app.add_handler(CommandHandler("streamer_mode", streamer_mode_command))
+    app.add_handler(CommandHandler("autopilot", autopilot_command))
     
     # Callbacks (non-project, e.g. perm:, input:, model:, reasoning:)
     app.add_handler(CallbackQueryHandler(button_handler))

@@ -176,6 +176,7 @@ def _command_reference() -> str:
         "/infinite - Toggle infinite sessions (auto-compaction)\n"
         "/allow_all - Toggle allow-all-tools mode (alias: /yolo)\n"
         "/reset_allowed_tools - Disable allow-all and restore prompts\n"
+        "/autopilot - Switch agent mode: Interactive / Plan / Autopilot\n"
         "/streamer_mode - Toggle live token streaming\n\n"
         "Code Tools\n"
         "/diff - Show git diff\n"
