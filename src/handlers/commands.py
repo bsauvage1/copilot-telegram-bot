@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 from pathlib import Path
@@ -89,10 +90,19 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = await service.get_usage_report()
     await update.message.reply_text(report)
 
+async def _mode_reply(update, emoji: str, label: str, rpc_ok: bool):
+    """Send a mode-switch confirmation, noting if RPC was deferred.
+    label must be a trusted string — callers must not pass user-supplied input directly."""
+    suffix = "" if rpc_ok else " <i>(will apply on next session start)</i>"
+    await update.message.reply_text(f"{emoji} {html.escape(label)}{suffix}", parse_mode="HTML")
+
+
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     context.user_data['plan_mode'] = False
+    # Set directly (no RPC) — session is about to be torn down anyway
+    service.agent_mode = "interactive"
     await service.reset_session()
     await update.message.reply_text("🧹 Session Cleared\nMemory reset.")
 
@@ -117,8 +127,9 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     context.user_data['plan_mode'] = False
-    logger.info("Switched to Edit Mode")
-    await update.message.reply_text("💬 Switched to Edit (Chat) Mode")
+    rpc_ok = await service.set_agent_mode("interactive")
+    logger.info("Switched to Interactive mode")
+    await _mode_reply(update, "💬", "Switched to Interactive (Edit) Mode", rpc_ok)
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -126,19 +137,23 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     args = context.args
     if args:
-        # /plan <prompt> — force plan mode and send prompt
+        # /plan <prompt> — switch to plan mode and send prompt
         context.user_data['plan_mode'] = True
+        rpc_ok = await service.set_agent_mode("plan")
+        await _mode_reply(update, "📝", "Plan Mode ON", rpc_ok)
         prompt = " ".join(args)
-        await update.message.reply_text("📝 Plan Mode ON")
         await chat_handler(update, context, override_text=prompt)
     else:
-        # /plan — toggle plan mode
-        mode = not context.user_data.get('plan_mode', False)
-        context.user_data['plan_mode'] = mode
-        if mode:
-            await update.message.reply_text("📝 Switch to Plan Mode")
+        # /plan with no args — toggle between plan and interactive
+        currently_plan = context.user_data.get('plan_mode', False)
+        if currently_plan:
+            context.user_data['plan_mode'] = False
+            rpc_ok = await service.set_agent_mode("interactive")
+            await _mode_reply(update, "💬", "Switched to Interactive (Edit) Mode", rpc_ok)
         else:
-            await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
+            context.user_data['plan_mode'] = True
+            rpc_ok = await service.set_agent_mode("plan")
+            await _mode_reply(update, "📝", "Switched to Plan Mode", rpc_ok)
 
 async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -600,6 +615,8 @@ async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     context.user_data['plan_mode'] = False
+    # Set directly (no RPC) — session is about to be torn down anyway
+    service.agent_mode = "interactive"
     await service.reset_session()
     tip = "" if service.infinite_sessions_enabled else "\nTip: Use /infinite to enable automatic context compaction."
     await update.message.reply_text(f"🗜️ Context compacted — session reset.{tip}")

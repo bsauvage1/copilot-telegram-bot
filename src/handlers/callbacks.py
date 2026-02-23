@@ -137,28 +137,15 @@ async def _handle_interaction_callback(query, update, context):
         await query.edit_message_text("⚠️ Interaction expired or already handled.")
 
 
-def _format_diff_html(raw_chunk: str) -> str:
-    """Format a raw diff chunk with visual markup for Telegram HTML mode.
+def _format_diff_chunk(raw_chunk: str) -> str:
+    """Wrap a raw diff chunk in a <pre> code block for Telegram.
 
-    Telegram has no color support, so we use:
-      bold        → added lines (+)
-      strikethrough → removed lines (-)
-      italic      → hunk headers (@@)
-      <code>      → file headers and context lines
+    Using <pre> gives a non-interactive monospace block (copy button, no link
+    detection, consistent rendering). Inline bold/italic/strikethrough caused
+    Telegram to interpret paths and identifiers as clickable links.
     """
     import html as html_lib
-    lines = []
-    for line in raw_chunk.splitlines():
-        e = html_lib.escape(line)
-        if line.startswith('+') and not line.startswith('+++'):
-            lines.append(f'<b>{e}</b>')
-        elif line.startswith('-') and not line.startswith('---'):
-            lines.append(f'<s>{e}</s>')
-        elif line.startswith('@@'):
-            lines.append(f'<i>{e}</i>')
-        else:
-            lines.append(f'<code>{e}</code>')
-    return '\n'.join(lines)
+    return f"<pre>{html_lib.escape(raw_chunk)}</pre>"
 
 
 async def _handle_diff_callback(query, context):
@@ -177,7 +164,7 @@ async def _handle_diff_callback(query, context):
     remainder = len(chunks) - len(to_send)
     for i, chunk in enumerate(to_send):
         header = f"📋 Git Diff (page {i+1}/{len(to_send)}):\n" if len(to_send) > 1 else "📋 Git Diff:\n"
-        text = header + _format_diff_html(chunk)
+        text = header + _format_diff_chunk(chunk)
         if i == 0:
             await query.message.reply_text(text, parse_mode="HTML")
         else:
@@ -326,6 +313,16 @@ async def _handle_granted_project_callback(query, context):
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
 
+def _mode_picker_header(active_mode: str) -> str:
+    """Build the /autopilot picker header, noting permissions flavor when in autopilot."""
+    from src.handlers.commands import _MODE_LABELS
+    label = _MODE_LABELS.get(active_mode, active_mode)
+    if active_mode == "autopilot":
+        flavor = "all permissions" if service.allow_all_tools else "limited permissions"
+        label += f" ({flavor})"
+    return f"🤖 Agent Mode — currently: {label}"
+
+
 async def _handle_mode_callback(query, context):
     """Handle /autopilot mode picker button taps."""
     from src.handlers.commands import _MODE_LABELS, _MODE_DESCRIPTIONS
@@ -334,6 +331,25 @@ async def _handle_mode_callback(query, context):
     if not service.session:
         await query.edit_message_text("⚠️ No active session — select a project first.")
         return
+
+    # Autopilot: show CLI-matching confirmation before activating
+    if mode == "autopilot":
+        buttons = [
+            [InlineKeyboardButton("✅ Enable all permissions (recommended)", callback_data="autopilot_confirm:allow_all")],
+            [InlineKeyboardButton("⚠️ Continue with limited permissions", callback_data="autopilot_confirm:limited")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="autopilot_confirm:cancel")],
+        ]
+        await query.edit_message_text(
+            "🚀 <b>Enable Autopilot Mode</b>\n\n"
+            "Autopilot mode works best with all permissions enabled. Without them, "
+            "permission requests will be auto-denied and the agent may not complete "
+            "tasks requiring file edits or shell commands.\n\n"
+            "You can also enable permissions later with /allow_all",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
     try:
         resp = await service.client._client.request(
             "session.mode.set",
@@ -342,8 +358,12 @@ async def _handle_mode_callback(query, context):
         active_mode = resp.get("mode", mode)
     except Exception as e:
         logger.error(f"mode.set failed: {e}")
-        await query.edit_message_text(f"⚠️ Failed to set mode: {e}")
+        await query.edit_message_text("⚠️ Failed to set mode — check bot logs for details.")
         return
+
+    # Keep service.agent_mode in sync; also sync plan_mode flag for footer display
+    service.agent_mode = active_mode
+    context.user_data['plan_mode'] = (active_mode == "plan")
 
     label = _MODE_LABELS.get(active_mode, active_mode)
     buttons = [
@@ -354,8 +374,67 @@ async def _handle_mode_callback(query, context):
         for m in ("interactive", "plan", "autopilot")
     ]
     await query.edit_message_text(
-        f"🤖 Agent Mode — currently: {label}\n\n"
+        _mode_picker_header(active_mode) + "\n\n"
         + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def _handle_autopilot_confirm_callback(query, context):
+    """Handle the autopilot permission confirmation step."""
+    from src.handlers.commands import _MODE_LABELS, _MODE_DESCRIPTIONS
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    choice = query.data.split(":", 1)[1]  # allow_all | limited | cancel
+
+    if choice == "cancel":
+        # Restore the normal mode picker
+        current = service.agent_mode
+        label = _MODE_LABELS.get(current, current)
+        buttons = [
+            [InlineKeyboardButton(
+                f"{'✅ ' if m == current else ''}{_MODE_LABELS[m]}",
+                callback_data=f"mode:{m}"
+            )]
+            for m in ("interactive", "plan", "autopilot")
+        ]
+        await query.edit_message_text(
+            _mode_picker_header(current) + "\n\n"
+            + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
+    # Set autopilot mode via RPC
+    try:
+        resp = await service.client._client.request(
+            "session.mode.set",
+            {"sessionId": service.session.session_id, "mode": "autopilot"}
+        )
+        active_mode = resp.get("mode", "autopilot")
+    except Exception as e:
+        logger.error(f"autopilot mode.set failed: {e}")
+        await query.edit_message_text("⚠️ Failed to set Autopilot mode — check bot logs for details.")
+        return
+
+    service.agent_mode = active_mode
+    context.user_data['plan_mode'] = False
+
+    if choice == "allow_all":
+        service.allow_all_tools = True
+    else:
+        service.allow_all_tools = False
+
+    buttons = [
+        [InlineKeyboardButton(
+            f"{'✅ ' if m == active_mode else ''}{_MODE_LABELS[m]}",
+            callback_data=f"mode:{m}"
+        )]
+        for m in ("interactive", "plan", "autopilot")
+    ]
+    await query.edit_message_text(
+        _mode_picker_header(active_mode) + "\n\n"
+        + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -391,6 +470,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_diff_callback(query, context)
         elif data.startswith("mode:"):
             await _handle_mode_callback(query, context)
+        elif data.startswith("autopilot_confirm:"):
+            await _handle_autopilot_confirm_callback(query, context)
         elif data == "streamer:reset":
             await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):

@@ -137,8 +137,9 @@ After selecting a project, a **cockpit message** appears with:
 | :--- | :--- |
 | `/start` | Open the main dashboard and project selector. |
 | `/help` | Show context-aware help with live status indicators. |
-| `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
-| `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
+| `/plan` | Switch to **Plan Mode** (planning & architecture). Toggles back to Interactive with no args. |
+| `/edit` | Switch to **Interactive (Edit/Chat) Mode**. |
+| `/autopilot` | Agent mode picker: 💬 Interactive / 📋 Plan / 🚀 Autopilot. Uses native `session.mode.set`. |
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. |
 | `/effort` | Set reasoning effort directly (low / medium / high). |
 | `/context` | Display model context and token usage info. |
@@ -150,17 +151,16 @@ After selecting a project, a **cockpit message** appears with:
 | `/clear` | Reset conversation memory. |
 | `/compact` | Compact context and reset session. |
 | `/infinite` | Toggle infinite sessions (automatic context compaction). |
+| `/allow_all` | Toggle (on/off) allow-all-tools mode — bypasses per-tool permission prompts. Alias: `/yolo`. |
+| `/reset_allowed_tools` | Explicitly disable allow-all and restore per-tool permission prompts. |
+| `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. Long responses auto-paginate. |
 | `/ls` | List files in current directory with depth picker and paged output. |
 | `/cwd` | Show current working directory. |
-| `/diff` | Show git diff for the current project (paged, color-coded). |
+| `/diff` | Show git diff for the current project (paged, monospace code block). |
 | `/review` | Run an AI code review on the current git diff. |
 | `/changelog` | Generate a changelog entry from recent git commits. |
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/ping` | Check CLI connectivity and measure latency. |
-| `/allow_all` | Toggle (on/off) allow-all-tools mode — bypasses per-tool permission prompts. Alias: `/yolo`. |
-| `/reset_allowed_tools` | Explicitly disable allow-all and restore per-tool permission prompts. |
-| `/autopilot` | Switch agent mode via inline picker: 💬 Interactive (default) / 📋 Plan (outline only, no execution) / 🚀 Autopilot (autonomous chaining). Maps to the CLI's native `session.mode.set`. |
-| `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. Long responses auto-paginate. |
 | `/update` | Update the Copilot CLI binary. |
 
 ## 🔧 Under the Hood

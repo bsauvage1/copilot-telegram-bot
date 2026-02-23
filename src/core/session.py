@@ -195,6 +195,8 @@ class SessionMixin:
         self.current_model = model
         logger.info(f"✅ Session resumed: {session_id}")
 
+        await self._apply_stored_agent_mode("session resume")
+
         self.session_info.workspace_path = str(ctx.root_path)
         self._extract_session_start_context()
         self._event_unsubscribe = self.session.on(self._handle_event)
@@ -208,6 +210,21 @@ class SessionMixin:
         self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
 
     # ── Session hooks ─────────────────────────────────────────────────
+
+    async def _apply_stored_agent_mode(self, context: str = "session"):
+        """Apply self.agent_mode via RPC if it differs from the default 'interactive'.
+        Skips the RPC for 'interactive' because that is the SDK's default on session start;
+        sending it would be redundant. If this assumption ever changes, remove the guard."""
+        if self.agent_mode == "interactive":
+            return
+        try:
+            await self.client._client.request(
+                "session.mode.set",
+                {"sessionId": self.session.session_id, "mode": self.agent_mode},
+            )
+            logger.info(f"Agent mode restored to '{self.agent_mode}' on {context}")
+        except Exception as e:
+            logger.warning(f"Failed to restore agent mode on {context}: {e}")
 
     async def _on_session_end(self, input_data, invocation):
         """Hook called by SDK when session ends (timeout, error, etc.)."""
@@ -279,6 +296,8 @@ class SessionMixin:
         self.session = await self.client.create_session(session_config)
         self.current_model = model
         logger.info(f"✅ Session created with model: {model}")
+
+        await self._apply_stored_agent_mode("session start")
 
         # Populate initial session info with workspace details
         self.session_info.workspace_path = str(ctx.root_path)

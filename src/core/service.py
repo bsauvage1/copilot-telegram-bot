@@ -85,6 +85,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.allow_all_tools: bool = False
         self.infinite_sessions_enabled: bool = False
         self.streaming_enabled: bool = False
+        self.agent_mode: str = "interactive"  # interactive | plan | autopilot
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
@@ -205,6 +206,26 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     async def get_usage_report(self) -> str:
         """Returns formatted usage stats from the accumulated SessionUsageTracker."""
         return await self.usage_tracker.get_usage_summary()
+
+    async def set_agent_mode(self, mode: str) -> bool:
+        """Set desired agent mode. self.agent_mode is always updated (optimistic local cache)
+        so the mode is re-applied on the next session start even if no session is active now.
+        Returns True only if the RPC call to the live session also succeeded."""
+        _VALID_MODES = ("interactive", "plan", "autopilot")
+        if mode not in _VALID_MODES:
+            raise ValueError(f"Invalid agent mode '{mode}'. Must be one of: {_VALID_MODES}")
+        self.agent_mode = mode  # intentional: store desired mode regardless of session state
+        if self.session and self.session.session_id:
+            try:
+                await self.client._client.request(
+                    "session.mode.set",
+                    {"sessionId": self.session.session_id, "mode": mode},
+                )
+                logger.info(f"Agent mode set to '{mode}' via RPC")
+                return True
+            except Exception as e:
+                logger.warning(f"session.mode.set RPC failed: {e} — will apply on next session start")
+        return False
 
     # ── Session export ────────────────────────────────────────────────
 
