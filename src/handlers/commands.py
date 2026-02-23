@@ -482,6 +482,63 @@ _MODE_DESCRIPTIONS = {
 }
 
 
+async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show MCP server status — enable/disable servers from mcp-config.json."""
+    if not await security_check(update): return
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from src.core.mcp_config import load_config, get_builtin_servers, MCP_CONFIG_PATH, query_tools
+
+    msg = await update.message.reply_text("🔌 Loading MCP servers…")
+
+    config = load_config()
+    disabled = set(config.get("disabled", []))
+    user_servers = config.get("mcpServers", {})
+    builtins = get_builtin_servers()
+
+    lines = ["🔌 <b>MCP Servers</b>\n"]
+
+    lines.append("<b>Built-in (SDK managed):</b>")
+    for name, srv in builtins.items():
+        lines.append(f"  ✅ {name} ({srv.get('type', '?')})")
+
+    lines.append("\n<b>User-configured:</b>")
+    if not user_servers:
+        lines.append("  None  —  edit ~/.copilot/mcp-config.json to add servers")
+    else:
+        enabled_servers = {n: s for n, s in user_servers.items() if n not in disabled}
+        tool_results = await asyncio.gather(
+            *[query_tools(srv) for srv in enabled_servers.values()],
+            return_exceptions=True,
+        )
+        tools_by_name = dict(zip(enabled_servers.keys(), tool_results))
+
+        for name, srv in user_servers.items():
+            icon = "⬜" if name in disabled else "✅"
+            kind = srv.get("type", "?")
+            detail = srv.get("url", srv.get("command", ""))
+            lines.append(f"  {icon} <b>{name}</b> ({kind})  <code>{detail}</code>")
+            if name not in disabled:
+                tools = tools_by_name.get(name)
+                if isinstance(tools, list) and tools:
+                    lines.append(f"    🔧 {', '.join(tools)}")
+                else:
+                    lines.append(f"    🔧 (could not query tools)")
+
+    lines.append(f"\n<code>{MCP_CONFIG_PATH}</code>")
+
+    buttons = []
+    for name in user_servers:
+        label = f"{'▶️ Enable' if name in disabled else '⏸ Disable'} {name}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"mcp_toggle:{name}")])
+    buttons.append([InlineKeyboardButton("🔄 Reload session now", callback_data="mcp_reload")])
+
+    await msg.edit_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+    )
+
+
 async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show mode picker: Interactive / Plan / Autopilot (maps to session.mode.set)."""
     if not await security_check(update): return

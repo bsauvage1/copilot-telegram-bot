@@ -448,6 +448,59 @@ async def _handle_streamer_reset_callback(query, context):
     await query.message.reply_text(f"✅ Session reset — Streamer Mode is now {state}.")
 
 
+async def _handle_mcp_callback(query, context):
+    """Handle mcp_toggle:<name> and mcp_reload callbacks."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from src.core.mcp_config import load_config, get_builtin_servers, toggle_server, MCP_CONFIG_PATH
+
+    data = query.data
+
+    if data == "mcp_reload":
+        await service.reset_session()
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("🔄 Session reloaded — MCP servers re-applied.")
+        return
+
+    # mcp_toggle:<name>
+    parts = data.split(":", 1)
+    if len(parts) < 2 or not parts[1]:
+        await query.answer("Invalid toggle request.", show_alert=True)
+        return
+    name = parts[1]
+    now_enabled = toggle_server(name)
+    status = "enabled ✅" if now_enabled else "disabled ⬜"
+
+    # Redraw the panel
+    config = load_config()
+    disabled = set(config.get("disabled", []))
+    user_servers = config.get("mcpServers", {})
+    builtins = get_builtin_servers()
+
+    lines = ["🔌 <b>MCP Servers</b>\n", "<b>Built-in (SDK managed):</b>"]
+    for bname, srv in builtins.items():
+        lines.append(f"  ✅ {bname} ({srv.get('type', '?')})")
+    lines.append("\n<b>User-configured:</b>")
+    for sname, srv in user_servers.items():
+        icon = "⬜" if sname in disabled else "✅"
+        kind = srv.get("type", "?")
+        detail = srv.get("url", srv.get("command", ""))
+        lines.append(f"  {icon} <b>{sname}</b> ({kind})  <code>{detail}</code>")
+    lines.append(f"\n<i>{name} is now {status} — reload session to apply.</i>")
+    lines.append(f"\n<code>{MCP_CONFIG_PATH}</code>")
+
+    buttons = []
+    for sname in user_servers:
+        label = f"{'▶️ Enable' if sname in disabled else '⏸ Disable'} {sname}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"mcp_toggle:{sname}")])
+    buttons.append([InlineKeyboardButton("🔄 Reload session now", callback_data="mcp_reload")])
+
+    await query.edit_message_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -472,6 +525,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_mode_callback(query, context)
         elif data.startswith("autopilot_confirm:"):
             await _handle_autopilot_confirm_callback(query, context)
+        elif data.startswith("mcp_toggle:") or data == "mcp_reload":
+            await _handle_mcp_callback(query, context)
         elif data == "streamer:reset":
             await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):

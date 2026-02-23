@@ -140,6 +140,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/plan` | Switch to **Plan Mode** (planning & architecture). Toggles back to Interactive with no args. |
 | `/edit` | Switch to **Interactive (Edit/Chat) Mode**. |
 | `/autopilot` | Agent mode picker: 💬 Interactive / 📋 Plan / 🚀 Autopilot. Uses native `session.mode.set`. |
+| `/mcp` | View MCP servers from `~/.copilot/mcp-config.json`. Lists active tools dynamically via MCP protocol. Enable/disable per server. Reload session to apply. |
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. |
 | `/effort` | Set reasoning effort directly (low / medium / high). |
 | `/context` | Display model context and token usage info. |

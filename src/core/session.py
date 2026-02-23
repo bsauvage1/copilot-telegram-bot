@@ -14,6 +14,7 @@ from src.config import (
     PERMISSION_TIMEOUT,
 )
 from src.core.context import ctx
+from src.core.mcp_config import get_enabled_servers
 from src.core.usage import SessionUsageTracker, SessionInfo
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,11 @@ class SessionMixin:
         if self.current_reasoning_effort:
             resume_config["reasoning_effort"] = self.current_reasoning_effort
 
+        mcp_servers = get_enabled_servers()
+        if mcp_servers:
+            resume_config["mcp_servers"] = mcp_servers
+            logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
+
         self.session = await self.client.resume_session(session_id, resume_config)
         self.current_model = model
         logger.info(f"✅ Session resumed: {session_id}")
@@ -292,6 +298,11 @@ class SessionMixin:
             session_config["reasoning_effort"] = self.current_reasoning_effort
         if self.infinite_sessions_enabled:
             session_config["infinite_sessions"] = {"enabled": True}
+
+        mcp_servers = get_enabled_servers()
+        if mcp_servers:
+            session_config["mcp_servers"] = mcp_servers
+            logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
 
         self.session = await self.client.create_session(session_config)
         self.current_model = model
