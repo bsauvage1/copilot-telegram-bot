@@ -1,7 +1,13 @@
+from contextvars import ContextVar
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Callable, Any
 from src.config import WORKSPACE_PATH, MAX_TRACKED_FILES, TRACKED_FILES_PRUNE_SIZE
+
+# Per-task flag: True when the current request is in streamer mode.
+# Uses ContextVar so concurrent asyncio tasks each see their own value —
+# asyncio.create_task() automatically copies the current context to child tasks.
+streaming_mode: ContextVar[bool] = ContextVar("streaming_mode", default=False)
 
 class SessionContext:
     """

@@ -2,13 +2,16 @@ import asyncio
 import html
 import logging
 import os
+import re
 from pathlib import Path
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
-from src.config import WORKSPACE_PATH
+from src.config import WORKSPACE_PATH, TELEGRAM_MSG_LIMIT
 from src.core.service import service
 from src.core.context import ctx
+from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path, safe_read_instructions, EMPTY_FILE_SENTINEL, extract_summary
 from src.handlers.messages import chat_handler
 from src.handlers.utils import security_check, check_project_selected
 from src.ui.formatters import format_tokens, format_percentage, get_model_context_limit
@@ -478,22 +481,37 @@ async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View the Copilot instructions file for the current project."""
+    """View Copilot instructions — status panel showing active instructions with path and summary."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.config import TELEGRAM_MSG_LIMIT
     cwd = service.get_working_directory()
-    instructions_path = Path(cwd) / ".github" / "copilot-instructions.md"
-    if instructions_path.exists():
-        content = instructions_path.read_text()
-        if len(content) > TELEGRAM_MSG_LIMIT - 50:
-            content = content[:TELEGRAM_MSG_LIMIT - 50] + "\n... truncated"
-        await update.message.reply_text(f"📋 Copilot Instructions:\n\n{content}")
-    else:
-        await update.message.reply_text(
-            f"⚠️ No instructions file found.\nExpected: {instructions_path}\n\n"
-            "Run `copilot init` in the terminal to create one."
-        )
+    user_path = USER_INSTRUCTIONS_PATH
+    project_path = project_instructions_path(cwd)
+
+    entries = [
+        ("👤 User", user_path, user_path.parent),
+        ("📁 Project", project_path, project_path.parent if project_path else None),
+    ]
+    status_lines: list[str] = []
+
+    for label, path, allowed_root in entries:
+        if path and path.is_file():
+            raw = safe_read_instructions(path, allowed_root)
+            if raw is not None and raw != EMPTY_FILE_SENTINEL:
+                summary = extract_summary(raw)
+                summary_line = f"\n   <i>{html.escape(summary)}</i>" if summary else ""
+                path_line = f"\n   <code>{html.escape(str(path))}</code>"
+                status_lines.append(f"✅ <b>{label}</b>: active{path_line}{summary_line}")
+            elif raw == EMPTY_FILE_SENTINEL:
+                status_lines.append(f"⚠️ <b>{label}</b>: file is empty")
+            else:
+                status_lines.append(f"🚫 <b>{label}</b>: blocked (symlink outside allowed dir)")
+        else:
+            path_str = html.escape(str(path)) if path else "n/a"
+            status_lines.append(f"⚠️ <b>{label}</b>: not found — <code>{path_str}</code>")
+
+    msg = "📋 <b>Copilot Instructions</b>\n\n" + "\n".join(status_lines)
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

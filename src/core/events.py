@@ -7,6 +7,7 @@ from copilot.generated.session_events import SessionEventType
 
 from src.core.context import ctx
 from src.ui.formatters import format_tool_start, format_tool_complete, truncate_text
+from src.core.context import streaming_mode as streaming_mode_var
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,8 @@ class EventHandlerMixin:
                 self._dispatch_async(self.current_callback, formatted)
                 return
 
-            msg = format_tool_complete(tool_name, result_content)
+            max_len = None if streaming_mode_var.get() else 100
+            msg = format_tool_complete(tool_name, result_content, max_result_length=max_len)
             if msg and ctx.status_callback:
                 if parent_tool_call_id:
                     msg = "  " + msg
@@ -141,7 +143,8 @@ class EventHandlerMixin:
             result = getattr(event.data, 'result', None)
             result_content = result.content if result and hasattr(result, 'content') else None
             if result_content:
-                msg = f"✓ {display_name} → {truncate_text(result_content, 100)}"
+                snippet = result_content if streaming_mode_var.get() else truncate_text(result_content, 100)
+                msg = f"✓ {display_name} → {snippet}"
             else:
                 msg = f"✓ {display_name} completed"
             if ctx.status_callback:

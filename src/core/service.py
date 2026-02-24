@@ -28,6 +28,7 @@ from src.core.usage import SessionUsageTracker, SessionInfo
 from src.core.events import EventHandlerMixin
 from src.core.session import SessionMixin
 from src.core.prefs import apply_prefs, save_prefs as _save_prefs
+from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             extra_dirs=self.extra_dirs or None,
             skills_enabled=skills_enabled,
             skills_total=skills_total,
+            instructions_user=USER_INSTRUCTIONS_PATH.exists(),
+            instructions_project=_proj_instr.exists() if (_proj_instr := project_instructions_path(self.session_info.cwd)) else False,
         )
 
     def get_directory_listing(self) -> str:

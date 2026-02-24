@@ -18,6 +18,7 @@ from src.core.mcp_config import get_enabled_servers
 from src.core.skills_config import get_skill_dirs_for_session, get_disabled_skills
 from src.core.agents import get_available_agents, parse_agent_prompt, AGENTS_DIR
 from src.core.usage import SessionUsageTracker, SessionInfo
+from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path, safe_read_instructions, EMPTY_FILE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,26 @@ def _apply_agent_config(svc, cfg: dict) -> None:
         else:
             logger.warning(f"Agent '{svc.selected_agent}' file not found — falling back to default agent")
             svc.selected_agent = None
+
+
+def _load_instructions(cwd: str | None) -> str:
+    """Read and combine user-level and project-level copilot-instructions.md files.
+
+    Returns a string ready to append to the system message, or "" if neither
+    file exists.  The CLI headless server does not auto-load these in SDK mode,
+    so we inject them explicitly here.
+    """
+    proj_path = project_instructions_path(cwd)
+    candidates = [
+        ("User instructions",  USER_INSTRUCTIONS_PATH, USER_INSTRUCTIONS_PATH.parent),
+        ("Project instructions", proj_path, proj_path.parent if proj_path else None),
+    ]
+    parts: list[str] = []
+    for label, path, allowed_root in candidates:
+        content = safe_read_instructions(path, allowed_root)
+        if content and content != EMPTY_FILE_SENTINEL:
+            parts.append(f"--- {label} ---\n{content}")
+    return "\n\n".join(parts)
 
 
 class SessionMixin:
@@ -342,6 +363,11 @@ class SessionMixin:
             session_config["system_message"]["content"] += (
                 f"\n\nYou also have access to these additional directories:\n{extra}"
             )
+
+        instructions = _load_instructions(self.session_info.cwd)
+        if instructions:
+            session_config["system_message"]["content"] += f"\n\n{instructions}"
+            logger.info("Copilot instructions injected into system message")
         if self.current_reasoning_effort:
             session_config["reasoning_effort"] = self.current_reasoning_effort
         if self.infinite_sessions_enabled:

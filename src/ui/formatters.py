@@ -98,7 +98,7 @@ def format_tool_start(tool_name: str, arguments: dict) -> str:
     return f"🔧 {tool_name}"
 
 
-def format_tool_complete(tool_name: str, result_content: Optional[str], success: bool = True) -> str:
+def format_tool_complete(tool_name: str, result_content: Optional[str], success: bool = True, max_result_length: Optional[int] = 100) -> str:
     """Format tool completion message with optional result summary."""
     if not success:
         return f"❌ {tool_name}"
@@ -123,8 +123,8 @@ def format_tool_complete(tool_name: str, result_content: Optional[str], success:
     if tool_name in silent_tools:
         return ""  # Don't send completion message
     
-    # Show truncated result for meaningful tools
-    truncated = truncate_text(result_content, max_length=100)
+    # Show result — no truncation in streaming mode (tail window handles overflow)
+    truncated = result_content if max_result_length is None else truncate_text(result_content, max_length=max_result_length)
     return f"✓ {tool_name} → {truncated}"
 
 
@@ -177,17 +177,24 @@ def truncate_command(cmd: str, max_lines: int = 4, max_chars: int = 250) -> str:
 
 
 def truncate_text(text: str, max_length: int = 150) -> str:
-    """Truncate text with ellipsis, cleaning up whitespace."""
+    """Truncate text at a word boundary to avoid mid-URL or mid-word cuts.
+
+    Collapses whitespace (newlines etc.) into single spaces, then cuts at the
+    last space before max_length.  Hard cut only when no word boundary exists.
+    """
     if not text:
         return ""
-    
-    # Replace multiple newlines/spaces with single space
+
     cleaned = re.sub(r'\s+', ' ', text.strip())
-    
+
     if len(cleaned) <= max_length:
         return cleaned
-    
-    return cleaned[:max_length] + "..."
+
+    cut = cleaned[:max_length]
+    last_space = cut.rfind(" ")
+    if last_space > max_length // 2:
+        return cut[:last_space] + "…"
+    return cut + "…"
 
 
 # ── Helpers relocated from handlers/commands.py ──────────────────────────────

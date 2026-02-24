@@ -35,11 +35,15 @@ def save_config(data: Dict[str, Any]) -> None:
 
 
 def get_enabled_servers() -> Dict[str, Any]:
-    """Return only enabled user-configured servers for passing to SessionConfig."""
+    """Return only enabled user-configured servers for passing to SessionConfig.
+
+    Injects "tools": ["*"] for any server that doesn't declare a tools list,
+    so the CLI exposes all available tools rather than defaulting to none.
+    """
     config = load_config()
     disabled = set(config.get("disabled", []))
     return {
-        name: srv
+        name: {**srv, "tools": srv.get("tools", ["*"])}
         for name, srv in config["mcpServers"].items()
         if name not in disabled
     }
@@ -149,7 +153,7 @@ async def _query_http_tools(srv: Dict[str, Any], timeout: float) -> Optional[Lis
     url = srv.get("url")
     if not url:
         return None
-    headers = {**srv.get("headers", {}), "Content-Type": "application/json"}
+    headers = {**srv.get("headers", {}), "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
     import urllib.request
     req_body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}

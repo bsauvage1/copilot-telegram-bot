@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 
 from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
+from src.core.context import ctx, streaming_mode
 from src.ui.streamer import MessageSender
 
 from src.handlers.utils import security_check, check_project_selected
@@ -121,12 +122,15 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     # ---- Callbacks wired into service.chat() ----
 
     async def tool_log(status: str):
-        """Handle tool status events. Send all as permanent messages."""
+        """Handle tool status events."""
         nonlocal tool_event_count
         if not status:  # Empty status = clear signal, ignore
             return
         logger.debug(f"🔍 tool_log received: {repr(status)}")
-        await sender.send_tool_event(status)  # This now also updates "Working..."
+        if service.streaming_enabled:
+            await sender.update_working(status)  # Edit Working... card in-place
+        else:
+            await sender.send_tool_event(status)  # Separate permanent card
         tool_event_count += 1
 
     async def stream_content(text_chunk: str):
@@ -180,6 +184,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                     InlineKeyboardButton("✅ Allow", callback_data=f"perm:{interaction_id}:allow"),
                     InlineKeyboardButton("❌ Deny", callback_data=f"perm:{interaction_id}:deny"),
                 ]]
+                await sender.pause_stream()
                 await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
                         
             elif kind == "input":
@@ -197,6 +202,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                         callback_data = f"input:{interaction_id}:{i}"
                     buttons.append([InlineKeyboardButton(btn_label, callback_data=callback_data)])
                 buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"input:{interaction_id}:cancel")])
+                await sender.pause_stream()
                 await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
             
             logger.info(f"⏳ Awaiting user response for interaction {interaction_id}...")
@@ -215,6 +221,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
 
     # ---- Execute chat ----
 
+    _streaming_token = streaming_mode.set(service.streaming_enabled)
     try:
         await service.chat(
             user_text, 
@@ -267,6 +274,8 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                 await update.message.reply_text("⚠️ Session lost and recovery failed. Please use /start to reconnect.")
         else:
             await update.message.reply_text(f"⚠️ Error: {str(e)}")
+    finally:
+        streaming_mode.reset(_streaming_token)
 
 
 async def _send_interaction_msg(update, context, chat_id, text, buttons):
