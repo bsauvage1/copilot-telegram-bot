@@ -187,8 +187,12 @@ def _command_reference() -> str:
         "/instructions - View Copilot instructions file\n\n"
         "Navigation\n"
         "/ls - Project file tree\n"
-        "/cwd - Show current directory\n\n"
+        "/cwd - Show current directory\n"
+        "/add_dir - Add extra directory to session scope\n"
+        "/list_dirs - List project + extra directories\n"
+        "/remove_dir - Remove an extra directory\n\n"
         "Utilities\n"
+        "/cockpit - Show session status (model, mode, agent, MCP…)\n"
         "/ping - Check CLI connection status\n"
         "/update - Update Copilot CLI\n"
     )
@@ -221,6 +225,7 @@ def get_cockpit_content(
     agent_count: int = 0,
     streaming: bool = False,
     allow_all_tools: bool = False,
+    extra_dirs: Optional[List[str]] = None,
 ) -> str:
     """Cockpit message sent after project selection — stats + status."""
     branch_line = f"🔀 Branch: {branch}\n" if branch else ""
@@ -235,6 +240,11 @@ def get_cockpit_content(
     agent_suffix = f" · {agent_count} available" if agent_count else ""
     agent_line = f"🧠 Agent: {agent_label}{agent_suffix}\n"
     streaming_line = f"📡 Streaming: {'enabled' if streaming else 'disabled'}\n"
+    if extra_dirs:
+        dirs_lines = "\n".join(f"  • {d}" for d in extra_dirs)
+        extra_dirs_line = f"➕ Extra dirs:\n{dirs_lines}\n"
+    else:
+        extra_dirs_line = "➕ Extra dirs: none\n"
     return (
         f"✅ Project Loaded: {project_name}\n\n"
         f"{model_line}"
@@ -242,28 +252,19 @@ def get_cockpit_content(
         f"{agent_line}"
         f"{mcp_line}"
         f"{streaming_line}"
-        f"📂 Path: {path}\n"
+        f"📂 Workspace: {path}\n"
+        f"{extra_dirs_line}"
         f"{branch_line}"
         f"📊 Stats: {file_count} files · {folder_count} folders\n\n"
         f"Type a message to start chatting, or /help for all commands."
     )
 
 
-def get_help_content(
-    auth_status: str,
-    version: str,
-    current_model: str,
-    cwd: str,
-    project_selected: bool = False,
-) -> str:
-    """Status-aware help with 🟢/🔴 indicator and full command list."""
+def get_help_content(project_selected: bool = False) -> str:
+    """Help with status indicator and full command list."""
     status_dot = "🟢" if project_selected else "🔴"
-    model_display = current_model if current_model else "Auto"
     return (
-        f"{status_dot} Copilot CLI-Telegram\n"
-        f"User: {auth_status}\n"
-        f"Workspace: {cwd}\n"
-        f"Model: {model_display}\n\n"
+        f"{status_dot} Copilot CLI-Telegram\n\n"
         f"{_command_reference()}"
         + ("" if project_selected else "\n⚠️ Action Required: Select or create a project to begin.")
     )

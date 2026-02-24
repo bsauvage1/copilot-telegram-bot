@@ -327,6 +327,13 @@ class SessionMixin:
                 ),
             },
         }
+        if self.extra_dirs:
+            # Sanitize: strip newlines/control chars from paths before injecting into system prompt
+            safe_dirs = [d.replace("\n", " ").replace("\r", " ").replace("\x00", "") for d in self.extra_dirs]
+            extra = "\n".join(f"- {d}" for d in safe_dirs)
+            session_config["system_message"]["content"] += (
+                f"\n\nYou also have access to these additional directories:\n{extra}"
+            )
         if self.current_reasoning_effort:
             session_config["reasoning_effort"] = self.current_reasoning_effort
         if self.infinite_sessions_enabled:

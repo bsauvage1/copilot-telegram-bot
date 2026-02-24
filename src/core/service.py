@@ -89,6 +89,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.streaming_enabled: bool = False
         self.agent_mode: str = "interactive"  # interactive | plan | autopilot
         self.selected_agent: Optional[str] = None  # key of active custom agent, or None for default
+        self.extra_dirs: List[str] = []  # additional directories added via /add_dir
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
@@ -157,6 +158,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         self.project_selected = True
         self.project_name = p.name
+        self.extra_dirs = []  # dirs are project-scoped; clear on project switch
         logger.info(f"Workspace change complete: {current_root} -> {ctx.root_path}")
         return str(ctx.root_path)
 
@@ -460,6 +462,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             agent_count=len(agents),
             streaming=self.streaming_enabled,
             allow_all_tools=self.allow_all_tools,
+            extra_dirs=self.extra_dirs or None,
         )
 
     def get_directory_listing(self) -> str:

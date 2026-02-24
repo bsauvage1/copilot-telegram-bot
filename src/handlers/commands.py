@@ -78,10 +78,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     from src.ui.menus import get_help_content
-    
-    cli_version, auth, _ = await _get_system_info()
-    
-    msg = get_help_content(auth, cli_version, service.current_model, service.get_working_directory(), service.project_selected)
+    msg = get_help_content(project_selected=service.project_selected)
     await update.message.reply_text(msg)
 
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,6 +158,14 @@ async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cwd = service.get_working_directory()
     await update.message.reply_text(f"📂 Current working directory:\n{cwd}")
 
+
+async def cockpit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the session cockpit — current model, mode, agent, MCP, workspace and stats."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    msg = await service.get_cockpit_message(context.user_data)
+    await update.message.reply_text(msg)
+
 async def _send_paged(message, text: str, header: str = "", max_msgs: int = 5):
     """Send text across multiple messages, capped at max_msgs, in preformatted blocks."""
     from src.config import TELEGRAM_MSG_LIMIT
@@ -189,6 +194,93 @@ async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌳 Full tree\n(2 levels deep)", callback_data="ls:2")],
     ])
     await update.message.reply_text("Choose file tree view:", reply_markup=keyboard)
+
+
+async def add_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add an extra directory to the session's accessible scope."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    path_arg = " ".join(context.args).strip() if context.args else ""
+    if not path_arg:
+        await update.message.reply_text(
+            "Usage: /add_dir <path>\n"
+            "Adds a directory to the agent's accessible scope (takes effect on next session reset).\n\n"
+            "Example: /add_dir ~/dotfiles"
+        )
+        return
+
+    path = Path(path_arg).expanduser().resolve()
+
+    # Security: only allow directories within the user's home tree
+    _home = Path.home().resolve()
+    try:
+        path.relative_to(_home)
+    except ValueError:
+        await update.message.reply_text(
+            f"❌ Path must be within your home directory ({_home}).\n"
+            f"Rejected: {path}"
+        )
+        return
+
+    if not path.exists():
+        await update.message.reply_text(f"❌ Path does not exist: {path}")
+        return
+    if not path.is_dir():
+        await update.message.reply_text(f"❌ Not a directory: {path}")
+        return
+
+    path_str = str(path)
+    if path_str in service.extra_dirs:
+        await update.message.reply_text(f"ℹ️ Already added: {path_str}")
+        return
+
+    service.extra_dirs.append(path_str)
+    await update.message.reply_text(
+        f"✅ Added: {path_str}\n"
+        f"Extra dirs: {len(service.extra_dirs)} total\n"
+        "Use /reset to apply to a new session, or /list_dirs to see all."
+    )
+
+
+async def list_dirs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List the current project directory and any extra directories."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    cwd = service.session_info.cwd or str(ctx.root_path)
+    lines = [f"📂 Project: {cwd}"]
+    if service.extra_dirs:
+        lines.append("\n➕ Extra directories:")
+        for d in service.extra_dirs:
+            lines.append(f"  • {d}")
+        lines.append("\nUse /reset to apply to a new session, or /remove_dir <path> to remove one.")
+    else:
+        lines.append("\nNo extra directories. Use /add_dir <path> to add one.")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def remove_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove an extra directory from the session's accessible scope."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    path_arg = " ".join(context.args).strip() if context.args else ""
+    if not path_arg:
+        await update.message.reply_text("Usage: /remove_dir <path>")
+        return
+
+    path_str = str(Path(path_arg).expanduser().resolve())
+    if path_str not in service.extra_dirs:
+        await update.message.reply_text(f"❌ Not in extra dirs: {path_str}\nUse /list_dirs to see current list.")
+        return
+
+    service.extra_dirs.remove(path_str)
+    await update.message.reply_text(
+        f"✅ Removed: {path_str}\n"
+        + (f"Remaining: {len(service.extra_dirs)} extra dir(s)." if service.extra_dirs else "No extra directories left.")
+    )
+
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return

@@ -23,6 +23,8 @@ from src.handlers.commands import (
     effort_command, sessions_command, infinite_command, ping_command,
     compact_command, review_command, changelog_command, streamer_mode_command,
     autopilot_command, mcp_command, agent_command,
+    add_dir_command, list_dirs_command, remove_dir_command,
+    cockpit_command,
     build_main_menu
 )
 from src.handlers.messages import chat_handler
@@ -63,12 +65,16 @@ async def setup_bot_commands(application):
         BotCommand("instructions", "View Copilot instructions file"),
         BotCommand("ls", "Project file tree"),
         BotCommand("cwd", "Show current directory"),
+        BotCommand("add_dir", "Add extra directory to session scope"),
+        BotCommand("list_dirs", "List project + extra directories"),
+        BotCommand("remove_dir", "Remove an extra directory"),
         BotCommand("ping", "Check CLI connection status"),
         BotCommand("update", "Update Copilot CLI"),
         BotCommand("streamer_mode", "Toggle live token streaming"),
         BotCommand("autopilot", "Switch agent mode: Interactive / Plan / Autopilot"),
         BotCommand("mcp", "View and enable/disable MCP servers"),
         BotCommand("agent", "Pick a custom agent (janitor, debug, security…)"),
+        BotCommand("cockpit", "Show session status: model, mode, agent, MCP, workspace"),
     ]
     try:
         # Set bot commands
@@ -169,6 +175,10 @@ def main():
     app.add_handler(CommandHandler("autopilot", autopilot_command))
     app.add_handler(CommandHandler("mcp", mcp_command))
     app.add_handler(CommandHandler("agent", agent_command))
+    app.add_handler(CommandHandler("add_dir", add_dir_command))
+    app.add_handler(CommandHandler("list_dirs", list_dirs_command))
+    app.add_handler(CommandHandler("remove_dir", remove_dir_command))
+    app.add_handler(CommandHandler("cockpit", cockpit_command))
     
     # Callbacks (non-project, e.g. perm:, input:, model:, reasoning:)
     app.add_handler(CallbackQueryHandler(button_handler))

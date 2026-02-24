@@ -158,10 +158,14 @@ After selecting a project, a **cockpit message** appears with:
 | `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. Long responses auto-paginate. |
 | `/ls` | List files in current directory with depth picker and paged output. |
 | `/cwd` | Show current working directory. |
+| `/add_dir` | Add an extra directory to the agent's accessible scope for the session (takes effect on next reset). |
+| `/list_dirs` | List the project workspace and all extra directories added via `/add_dir`. |
+| `/remove_dir` | Remove an extra directory from the session scope. |
 | `/diff` | Show git diff for the current project (paged, monospace code block). |
 | `/review` | Run an AI code review on the current git diff. |
 | `/changelog` | Generate a changelog entry from recent git commits. |
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
+| `/cockpit` | Re-display the session status card (model, mode, agent, MCP, workspace, branch, stats). |
 | `/ping` | Check CLI connectivity and measure latency. |
 | `/update` | Update the Copilot CLI binary. |
 

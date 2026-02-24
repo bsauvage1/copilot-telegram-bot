@@ -232,27 +232,12 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         except asyncio.TimeoutError:
             logger.warning("Completion event timeout — proceeding")
         
-        # Build footer
-        footer = ""
-        try:
-            project, model, cost = service.get_usage_metadata()
-            git = await service.get_git_info()
-            mode = "Planning" if context.user_data.get('plan_mode') else "Chat"
-            parts = [f"📂 {project}"]
-            if git:
-                parts.append(f"🔀 {git[1:]}")
-            parts.append(f"🤖 {model} ({cost}x)")
-            parts.append(f"⚙️ Mode: {mode}")
-            footer = "\n".join(parts)
-        except Exception as e:
-            logger.error(f"Footer generation failed: {e}")
-        
         # Finalize response — streaming edits live message, non-streaming sends new
         if service.streaming_enabled:
-            await sender.finalize_stream(footer)
+            await sender.finalize_stream()
         else:
             full_response = "".join(response_chunks)
-            await sender.send_response(full_response, footer)
+            await sender.send_response(full_response)
 
     except asyncio.CancelledError:
         # /cancel was invoked — just dismiss the working message silently
