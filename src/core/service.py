@@ -86,6 +86,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.infinite_sessions_enabled: bool = False
         self.streaming_enabled: bool = False
         self.agent_mode: str = "interactive"  # interactive | plan | autopilot
+        self.selected_agent: Optional[str] = None  # key of active custom agent, or None for default
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()

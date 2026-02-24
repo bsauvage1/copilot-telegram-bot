@@ -571,6 +571,33 @@ async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _build_agent_picker(agents: list, current: str | None) -> tuple[str, "InlineKeyboardMarkup"]:
+    """Build the agent picker message text and keyboard."""
+    import html as _html
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    current_label = _html.escape(next((a["name"] for a in agents if a["key"] == current), "Default") if current else "Default")
+    hint = "" if agents else "\n<i>No custom agents found in ~/.copilot/agents/</i>"
+    buttons = [[InlineKeyboardButton(
+        f"{'✅' if not current else '🤖'} Default",
+        callback_data="agent:default"
+    )]]
+    for a in agents:
+        icon = "✅" if a["key"] == current else a["icon"]
+        buttons.append([InlineKeyboardButton(f"{icon} {a['name']}", callback_data=f"agent_detail:{a['key']}")])
+    return f"🤖 <b>Select Agent:</b> {current_label}{hint}", InlineKeyboardMarkup(buttons)
+
+
+async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pick a custom agent for the current session."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.core.agents import get_available_agents
+
+    agents = get_available_agents()
+    text, keyboard = _build_agent_picker(agents, service.selected_agent)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
 async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set reasoning effort level for models that support it."""
     if not await security_check(update): return

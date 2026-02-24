@@ -15,6 +15,7 @@ from src.config import (
 )
 from src.core.context import ctx
 from src.core.mcp_config import get_enabled_servers
+from src.core.agents import get_available_agents, parse_agent_prompt, AGENTS_DIR
 from src.core.usage import SessionUsageTracker, SessionInfo
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,33 @@ class _PermissionRequest:
     def __init__(self, name: str, args: dict):
         self.tool_name = name
         self.arguments = args
+
+
+def _apply_agent_config(svc, cfg: dict) -> None:
+    """Inject config_dir and selected agent into a session config dict.
+
+    config_dir is always set so the CLI discovers ~/.copilot/agents/ for
+    auto-inference even when no explicit agent is selected.
+    """
+    cfg["config_dir"] = str(AGENTS_DIR.parent)  # ~/.copilot
+    if svc.selected_agent:
+        prompt = parse_agent_prompt(svc.selected_agent)
+        if prompt:
+            agents = get_available_agents()
+            meta = next((a for a in agents if a["key"] == svc.selected_agent), {})
+            cfg["custom_agents"] = [{
+                "name": svc.selected_agent,
+                "display_name": meta.get("name", svc.selected_agent),
+                "description": meta.get("description", ""),
+                "prompt": prompt,
+                # infer=False: user explicitly picked this agent, so the main
+                # agent should not override the selection via auto-inference
+                "infer": False,
+            }]
+            logger.info(f"Custom agent injected: {svc.selected_agent}")
+        else:
+            logger.warning(f"Agent '{svc.selected_agent}' file not found — falling back to default agent")
+            svc.selected_agent = None
 
 
 class SessionMixin:
@@ -197,6 +225,8 @@ class SessionMixin:
             resume_config["mcp_servers"] = mcp_servers
             logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
 
+        _apply_agent_config(self, resume_config)
+
         self.session = await self.client.resume_session(session_id, resume_config)
         self.current_model = model
         logger.info(f"✅ Session resumed: {session_id}")
@@ -303,6 +333,8 @@ class SessionMixin:
         if mcp_servers:
             session_config["mcp_servers"] = mcp_servers
             logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
+
+        _apply_agent_config(self, session_config)
 
         self.session = await self.client.create_session(session_config)
         self.current_model = model

@@ -164,6 +164,7 @@ def _command_reference() -> str:
         "/edit - Switch to Interactive (Edit/Chat) Mode\n"
         "/autopilot - Agent mode picker: Interactive / Plan / Autopilot\n"
         "/mcp - View and enable/disable MCP servers\n"
+        "/agent - Pick a custom agent (janitor, debug, security…)\n"
         "/model - Switch AI Model\n"
         "/effort - Set reasoning effort level\n\n"
         "Session Control\n"

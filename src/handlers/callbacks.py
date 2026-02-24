@@ -501,6 +501,81 @@ async def _handle_mcp_callback(query, context):
     )
 
 
+async def _apply_agent_selection(query, key: str) -> None:
+    """Apply agent selection by key — shared by agent: and agent_select: routes."""
+    import html as _html
+    from src.core.agents import get_available_agents
+
+    if not key:
+        await query.answer("Invalid agent key.", show_alert=True)
+        return
+
+    agents = get_available_agents()
+
+    if key == "default":
+        service.selected_agent = None
+        label = "Default"
+        description = "Standard Copilot — all agents available for auto-inference."
+    else:
+        meta = next((a for a in agents if a["key"] == key), None)
+        if not meta:  # key not in known agent list — reject
+            await query.answer("Agent not found.", show_alert=True)
+            return
+        service.selected_agent = key
+        label = _html.escape(meta["name"])
+        description = _html.escape(meta.get("description", ""))
+
+    await service.reset_session()
+    await query.edit_message_text(
+        f"🤖 <b>Agent:</b> {label}\n{description}\n\n⚠️ Session reset — ready to chat.",
+        parse_mode="HTML",
+    )
+
+
+async def _handle_agent_callback(query, context):
+    """Handle agent:<key> — apply selection."""
+    key = query.data.split(":", 1)[1]
+    await _apply_agent_selection(query, key)
+
+
+async def _handle_agent_detail_callback(query, context):
+    """Show detail card for an agent — edit picker in place."""
+    import html as _html
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from src.core.agents import get_available_agents
+
+    key = query.data.split(":", 1)[1]
+    if not key:
+        await query.answer("Invalid agent key.", show_alert=True)
+        return
+    agents = get_available_agents()
+    meta = next((a for a in agents if a["key"] == key), None)
+    if not meta:
+        await query.answer("Agent not found.", show_alert=True)
+        return
+
+    is_current = service.selected_agent == key
+    select_label = "✅ Already selected" if is_current else "✅ Select"
+    await query.edit_message_text(
+        f"{meta['icon']} <b>{_html.escape(meta['name'])}</b>\n\n{_html.escape(meta['description'])}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(select_label, callback_data=f"agent_select:{key}"),
+            InlineKeyboardButton("◀️ Back", callback_data="agent_back"),
+        ]]),
+    )
+
+
+async def _handle_agent_back_callback(query, context):
+    """Return to the agent picker."""
+    from src.core.agents import get_available_agents
+    from src.handlers.commands import _build_agent_picker
+
+    agents = get_available_agents()
+    text, keyboard = _build_agent_picker(agents, service.selected_agent)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -527,6 +602,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_autopilot_confirm_callback(query, context)
         elif data.startswith("mcp_toggle:") or data == "mcp_reload":
             await _handle_mcp_callback(query, context)
+        elif data.startswith("agent:"):
+            await _handle_agent_callback(query, context)
+        elif data.startswith("agent_detail:"):
+            await _handle_agent_detail_callback(query, context)
+        elif data.startswith("agent_select:"):
+            await _apply_agent_selection(query, data.split(":", 1)[1])
+        elif data == "agent_back":
+            await _handle_agent_back_callback(query, context)
         elif data == "streamer:reset":
             await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):

@@ -141,6 +141,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/edit` | Switch to **Interactive (Edit/Chat) Mode**. |
 | `/autopilot` | Agent mode picker: 💬 Interactive / 📋 Plan / 🚀 Autopilot. Uses native `session.mode.set`. |
 | `/mcp` | View MCP servers from `~/.copilot/mcp-config.json`. Lists active tools dynamically via MCP protocol. Enable/disable per server. Reload session to apply. |
+| `/agent` | Pick a custom agent from `~/.copilot/agents/`. Compact picker with derived emoji icons. Tap an agent to see its description, then confirm or go back. Selecting one resets the session with that agent injected. Default = standard Copilot with all agents available for auto-inference. |
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. |
 | `/effort` | Set reasoning effort directly (low / medium / high). |
 | `/context` | Display model context and token usage info. |
