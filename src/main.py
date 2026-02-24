@@ -24,7 +24,7 @@ from src.handlers.commands import (
     compact_command, review_command, changelog_command, streamer_mode_command,
     autopilot_command, mcp_command, agent_command,
     add_dir_command, list_dirs_command, remove_dir_command,
-    cockpit_command,
+    cockpit_command, skills_command,
     build_main_menu
 )
 from src.handlers.messages import chat_handler
@@ -73,6 +73,7 @@ async def setup_bot_commands(application):
         BotCommand("streamer_mode", "Toggle live token streaming"),
         BotCommand("autopilot", "Switch agent mode: Interactive / Plan / Autopilot"),
         BotCommand("mcp", "View and enable/disable MCP servers"),
+        BotCommand("skills", "View and enable/disable skills"),
         BotCommand("agent", "Pick a custom agent (janitor, debug, security…)"),
         BotCommand("cockpit", "Show session status: model, mode, agent, MCP, workspace"),
     ]
@@ -174,6 +175,7 @@ def main():
     app.add_handler(CommandHandler("streamer_mode", streamer_mode_command))
     app.add_handler(CommandHandler("autopilot", autopilot_command))
     app.add_handler(CommandHandler("mcp", mcp_command))
+    app.add_handler(CommandHandler("skills", skills_command))
     app.add_handler(CommandHandler("agent", agent_command))
     app.add_handler(CommandHandler("add_dir", add_dir_command))
     app.add_handler(CommandHandler("list_dirs", list_dirs_command))

@@ -462,6 +462,7 @@ async def _handle_streamer_reset_callback(query, context):
 
 async def _handle_mcp_callback(query, context):
     """Handle mcp_toggle:<name> and mcp_reload callbacks."""
+    import html as _html
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from src.core.mcp_config import load_config, get_builtin_servers, toggle_server, MCP_CONFIG_PATH
 
@@ -480,8 +481,8 @@ async def _handle_mcp_callback(query, context):
         await query.answer("Invalid toggle request.", show_alert=True)
         return
     name = parts[1]
-    now_enabled = toggle_server(name)
-    status = "enabled ✅" if now_enabled else "disabled ⬜"
+    toggle_server(name)
+    await query.answer()  # clear button spinner
 
     # Redraw the panel
     config = load_config()
@@ -491,15 +492,17 @@ async def _handle_mcp_callback(query, context):
 
     lines = ["🔌 <b>MCP Servers</b>\n", "<b>Built-in (SDK managed):</b>"]
     for bname, srv in builtins.items():
-        lines.append(f"  ✅ {bname} ({srv.get('type', '?')})")
+        lines.append(f"  ✅ {_html.escape(bname)} ({_html.escape(srv.get('type', '?'))})")
     lines.append("\n<b>User-configured:</b>")
     for sname, srv in user_servers.items():
         icon = "⬜" if sname in disabled else "✅"
-        kind = srv.get("type", "?")
-        detail = srv.get("url", srv.get("command", ""))
-        lines.append(f"  {icon} <b>{sname}</b> ({kind})  <code>{detail}</code>")
-    lines.append(f"\n<i>{name} is now {status} — reload session to apply.</i>")
-    lines.append(f"\n<code>{MCP_CONFIG_PATH}</code>")
+        kind = _html.escape(srv.get("type", "?"))
+        detail = _html.escape(srv.get("url", srv.get("command", "")))
+        lines.append(f"  {icon} <b>{_html.escape(sname)}</b> ({kind})  <code>{detail}</code>")
+    now_enabled = name not in disabled
+    status = "enabled ✅" if now_enabled else "disabled ⬜"
+    lines.append(f"\n<i>{_html.escape(name)} is now {status} — reload session to apply.</i>")
+    lines.append(f"\n<code>{_html.escape(str(MCP_CONFIG_PATH))}</code>")
 
     buttons = []
     for sname in user_servers:
@@ -512,6 +515,91 @@ async def _handle_mcp_callback(query, context):
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
+
+
+async def _handle_skill_callback(query, context) -> None:
+    """Handle skill_toggle:<name> and skill_reload callbacks."""
+    from src.core.skills_config import (
+        scan_skills, get_disabled_skills, toggle_skill, skill_callback_name,
+    )
+    from src.core.context import ctx
+
+    data = query.data
+
+    if data == "skill_reload":
+        if not await _safe_reset_session(query):
+            return
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("🔄 Session reloaded — skills re-applied.")
+        return
+
+    # skill_toggle:<cb_name>  (cb_name is an MD5 digest from skill_callback_name())
+    parts = data.split(":", 1)
+    if len(parts) < 2 or not parts[1]:
+        await query.answer("Invalid toggle request.", show_alert=True)
+        return
+    cb_name = parts[1]
+
+    workspace = str(ctx.root_path) if ctx.root_path else None
+    skills = scan_skills(workspace)
+
+    # Match against truncated names (cb_name was produced by skill_callback_name())
+    match = next((s for s in skills if skill_callback_name(s["name"]) == cb_name), None)
+    if not match:
+        await query.answer("Skill not found — it may have been removed.", show_alert=True)
+        return
+
+    toggle_skill(match["name"])
+    await query.answer()  # clear button spinner
+
+    disabled = set(get_disabled_skills())
+    text, markup = build_skills_panel(skills, disabled, workspace)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+def build_skills_panel(
+    skills: list,
+    disabled: set,
+    workspace: "str | None",
+) -> "tuple[str, InlineKeyboardMarkup]":
+    """Build the skills status panel text + button markup. Public — used by commands.py."""
+    import html as _html
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from src.core.skills_config import (
+        get_skill_dirs, get_user_skill_dirs, USER_SKILLS_DIR, skill_callback_name,
+    )
+
+    dirs = get_skill_dirs(workspace)
+    user_dirs = get_user_skill_dirs()  # already read by scan_skills; one more read here is fine
+
+    lines = ["🧩 <b>Skills</b>\n", "<b>Skill directories:</b>"]
+    if dirs:
+        for d in dirs:
+            source = "👤 user" if d in user_dirs else "📁 project"
+            lines.append(f"  {source}  <code>{_html.escape(str(d))}</code>")
+    else:
+        lines.append(f"  None found  —  add files to <code>{_html.escape(str(USER_SKILLS_DIR))}</code>")
+
+    lines.append("\n<b>Loaded skills:</b>")
+    if not skills:
+        lines.append("  No skills found in scanned directories")
+    else:
+        for s in skills:
+            icon = "⬜" if s["name"] in disabled else "✅"
+            src_icon = "👤" if s["source"] == "user" else "📁"
+            lines.append(f"  {icon} {src_icon} <b>{_html.escape(s['name'])}</b>")
+
+    lines.append("\n<i>Reload session to apply changes.</i>")
+
+    buttons = []
+    for s in skills:
+        cb_name = skill_callback_name(s["name"])
+        display = s["name"] if len(s["name"]) <= 30 else s["name"][:29] + "…"
+        label = f"{'▶️ Enable' if s['name'] in disabled else '⏸ Disable'} {display}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"skill_toggle:{cb_name}")])
+    buttons.append([InlineKeyboardButton("🔄 Reload session now", callback_data="skill_reload")])
+
+    return "\n".join(lines), InlineKeyboardMarkup(buttons)
 
 
 async def _apply_agent_selection(query, key: str) -> None:
@@ -618,6 +706,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_autopilot_confirm_callback(query, context)
         elif data.startswith("mcp_toggle:") or data == "mcp_reload":
             await _handle_mcp_callback(query, context)
+        elif data.startswith("skill_toggle:") or data == "skill_reload":
+            await _handle_skill_callback(query, context)
         elif data.startswith("agent:"):
             await _handle_agent_callback(query, context)
         elif data.startswith("agent_detail:"):

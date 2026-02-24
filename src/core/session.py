@@ -15,6 +15,7 @@ from src.config import (
 )
 from src.core.context import ctx
 from src.core.mcp_config import get_enabled_servers
+from src.core.skills_config import get_skill_dirs_for_session, get_disabled_skills
 from src.core.agents import get_available_agents, parse_agent_prompt, AGENTS_DIR
 from src.core.usage import SessionUsageTracker, SessionInfo
 
@@ -228,6 +229,13 @@ class SessionMixin:
             resume_config["mcp_servers"] = mcp_servers
             logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
 
+        skill_dirs = get_skill_dirs_for_session(str(ctx.root_path))
+        if skill_dirs:
+            resume_config["skill_directories"] = skill_dirs
+        disabled = get_disabled_skills()
+        if disabled:
+            resume_config["disabled_skills"] = disabled
+
         _apply_agent_config(self, resume_config)
 
         self.session = await self.client.resume_session(session_id, resume_config)
@@ -343,6 +351,15 @@ class SessionMixin:
         if mcp_servers:
             session_config["mcp_servers"] = mcp_servers
             logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
+
+        skill_dirs = get_skill_dirs_for_session(str(ctx.root_path))
+        if skill_dirs:
+            session_config["skill_directories"] = skill_dirs
+            logger.info(f"Skill directories: {skill_dirs}")
+        disabled = get_disabled_skills()
+        if disabled:
+            session_config["disabled_skills"] = disabled
+            logger.info(f"Disabled skills: {disabled}")
 
         _apply_agent_config(self, session_config)
 

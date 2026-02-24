@@ -44,10 +44,13 @@ def apply_prefs(service: "CopilotService") -> None:
 
 
 def save_prefs(service: "CopilotService") -> None:
-    """Persist current user preferences to disk."""
-    prefs = {key: getattr(service, key) for key in _PREF_KEYS}
+    """Persist current user preferences to disk (merges with existing data)."""
+    # Read existing file first so keys managed by other modules (e.g. disabled_skills)
+    # are not wiped when we overwrite only _PREF_KEYS.
+    existing = load_prefs()
+    existing.update({key: getattr(service, key) for key in _PREF_KEYS})
     try:
         PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PREFS_FILE.write_text(json.dumps(prefs, indent=2))
+        PREFS_FILE.write_text(json.dumps(existing, indent=2))
     except Exception as e:
         logger.warning(f"Could not save prefs: {e}")

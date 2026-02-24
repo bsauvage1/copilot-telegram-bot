@@ -593,7 +593,7 @@ async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append("<b>Built-in (SDK managed):</b>")
     for name, srv in builtins.items():
-        lines.append(f"  ✅ {name} ({srv.get('type', '?')})")
+        lines.append(f"  ✅ {html.escape(name)} ({html.escape(srv.get('type', '?'))})")
 
     lines.append("\n<b>User-configured:</b>")
     if not user_servers:
@@ -608,13 +608,13 @@ async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for name, srv in user_servers.items():
             icon = "⬜" if name in disabled else "✅"
-            kind = srv.get("type", "?")
-            detail = srv.get("url", srv.get("command", ""))
-            lines.append(f"  {icon} <b>{name}</b> ({kind})  <code>{detail}</code>")
+            kind = html.escape(srv.get("type", "?"))
+            detail = html.escape(srv.get("url", srv.get("command", "")))
+            lines.append(f"  {icon} <b>{html.escape(name)}</b> ({kind})  <code>{detail}</code>")
             if name not in disabled:
                 tools = tools_by_name.get(name)
                 if isinstance(tools, list) and tools:
-                    lines.append(f"    🔧 {', '.join(tools)}")
+                    lines.append(f"    🔧 {html.escape(', '.join(tools))}")
                 else:
                     lines.append(f"    🔧 (could not query tools)")
 
@@ -895,4 +895,20 @@ async def streamer_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
             "A session reset is required for the change to take effect.",
             reply_markup=keyboard,
         )
+
+
+async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show skill directories and loaded skills — enable/disable individual skills."""
+    if not await security_check(update): return
+    from src.core.skills_config import scan_skills, get_disabled_skills
+    from src.core.context import ctx
+    from src.handlers.callbacks import build_skills_panel
+
+    msg = await update.message.reply_text("🧩 Loading skills…")
+
+    workspace = str(ctx.root_path) if ctx.root_path else None
+    skills = scan_skills(workspace)
+    disabled = set(get_disabled_skills())
+    text, markup = build_skills_panel(skills, disabled, workspace)
+    await msg.edit_text(text, parse_mode="HTML", reply_markup=markup)
 

@@ -426,6 +426,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
         from src.core.mcp_config import get_enabled_servers, load_config
+        from src.core.skills_config import scan_skills, get_disabled_skills
         model = self.user_selected_model or self.current_model or "Auto"
         # Use persisted agent_mode as source of truth; sync context flag for footer display
         mode_map = {"plan": "Plan", "autopilot": "Autopilot"}
@@ -440,6 +441,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         all_servers = load_config()["mcpServers"]
         mcp_enabled = len(get_enabled_servers())
         mcp_total = len(all_servers)
+        # Skills count
+        all_skills = scan_skills(self.session_info.cwd)
+        disabled_skills = set(get_disabled_skills())
+        skills_enabled = sum(1 for s in all_skills if s["name"] not in disabled_skills)
+        skills_total = len(all_skills)
         # Get selected agent display name and total count
         from src.core.agents import get_available_agents
         agents = get_available_agents()
@@ -463,6 +469,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             streaming=self.streaming_enabled,
             allow_all_tools=self.allow_all_tools,
             extra_dirs=self.extra_dirs or None,
+            skills_enabled=skills_enabled,
+            skills_total=skills_total,
         )
 
     def get_directory_listing(self) -> str:

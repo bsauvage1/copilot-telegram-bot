@@ -164,6 +164,7 @@ def _command_reference() -> str:
         "/edit - Switch to Interactive (Edit/Chat) Mode\n"
         "/autopilot - Agent mode picker: Interactive / Plan / Autopilot\n"
         "/mcp - View and enable/disable MCP servers\n"
+        "/skills - View and enable/disable skills\n"
         "/agent - Pick a custom agent (janitor, debug, security…)\n"
         "/model - Switch AI Model\n"
         "/effort - Set reasoning effort level\n\n"
@@ -226,6 +227,8 @@ def get_cockpit_content(
     streaming: bool = False,
     allow_all_tools: bool = False,
     extra_dirs: Optional[List[str]] = None,
+    skills_enabled: int = 0,
+    skills_total: int = 0,
 ) -> str:
     """Cockpit message sent after project selection — stats + status."""
     branch_line = f"🔀 Branch: {branch}\n" if branch else ""
@@ -236,6 +239,10 @@ def get_cockpit_content(
         mcp_line = f"🔌 MCP: {mcp_enabled} active · {mcp_total} available\n"
     else:
         mcp_line = ""
+    if skills_total:
+        skills_line = f"🧩 Skills: {skills_enabled} active · {skills_total} available\n"
+    else:
+        skills_line = ""
     agent_label = agent_name if agent_name else "Default"
     agent_suffix = f" · {agent_count} available" if agent_count else ""
     agent_line = f"🧠 Agent: {agent_label}{agent_suffix}\n"
@@ -251,6 +258,7 @@ def get_cockpit_content(
         f"{mode_line}"
         f"{agent_line}"
         f"{mcp_line}"
+        f"{skills_line}"
         f"{streaming_line}"
         f"📂 Workspace: {path}\n"
         f"{extra_dirs_line}"
