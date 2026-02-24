@@ -439,6 +439,7 @@ async def allow_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle allow-all-tools mode (skip per-request permission prompts). Alias: /yolo"""
     if not await security_check(update): return
     service.allow_all_tools = not service.allow_all_tools
+    service.save_prefs()
     if service.allow_all_tools:
         await update.message.reply_text(
             "✅ Allow All Tools: ENABLED\n"
@@ -464,6 +465,7 @@ async def reset_allowed_tools_command(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("ℹ️ Allow All Tools is already disabled — no change.")
         return
     service.allow_all_tools = False
+    service.save_prefs()
     await update.message.reply_text(
         "🔒 Allowed Tools Reset.\n"
         "Per-request permission prompts restored."
@@ -657,6 +659,7 @@ async def infinite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle infinite sessions (automatic context compaction)."""
     if not await security_check(update): return
     service.infinite_sessions_enabled = not service.infinite_sessions_enabled
+    service.save_prefs()
     if service.infinite_sessions_enabled:
         await update.message.reply_text(
             "♾️ Infinite Sessions: ENABLED\n"
@@ -782,6 +785,7 @@ async def streamer_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not await security_check(update): return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     service.streaming_enabled = not service.streaming_enabled
+    service.save_prefs()
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("🔄 Reset session now", callback_data="streamer:reset")
     ]])

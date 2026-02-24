@@ -136,6 +136,7 @@ class SessionMixin:
         self.cleanup_temp_dir()
         self.session_id = str(uuid.uuid4())[:8]
         self._tool_call_names.clear()
+        self._show_file_args.clear()
         self.last_session_usage = None
         self.last_assistant_usage = None
 
@@ -164,6 +165,7 @@ class SessionMixin:
         self.current_model = model
         self.user_selected_model = model
         logger.info(f"🔄 Changing model to {model} (will reset session)")
+        self.save_prefs()
 
         await self.reset_session(model)
 
@@ -195,6 +197,7 @@ class SessionMixin:
         self.cleanup_temp_dir()
         self.session_id = str(uuid.uuid4())[:8]
         self._tool_call_names.clear()
+        self._show_file_args.clear()
         self.last_session_usage = None
         self.last_assistant_usage = None
         self.session_info = SessionInfo()

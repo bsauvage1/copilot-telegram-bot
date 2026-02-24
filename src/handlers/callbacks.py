@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 WAITING_PROJECT_NAME = 1
 
 
+async def _safe_reset_session(query) -> bool:
+    """Reset session only if no chat is in flight. Returns False and alerts user if busy."""
+    if service._chat_lock.locked():
+        await query.answer("⏳ A request is in progress — please wait.", show_alert=True)
+        return False
+    await service.reset_session()
+    return True
+
+
 async def _refresh_auth_info(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Refresh auth, CLI version and SDK version in context after service is started."""
     from src.handlers.commands import _get_system_info
@@ -364,6 +373,7 @@ async def _handle_mode_callback(query, context):
     # Keep service.agent_mode in sync; also sync plan_mode flag for footer display
     service.agent_mode = active_mode
     context.user_data['plan_mode'] = (active_mode == "plan")
+    service.save_prefs()
 
     label = _MODE_LABELS.get(active_mode, active_mode)
     buttons = [
@@ -423,6 +433,7 @@ async def _handle_autopilot_confirm_callback(query, context):
         service.allow_all_tools = True
     else:
         service.allow_all_tools = False
+    service.save_prefs()
 
     buttons = [
         [InlineKeyboardButton(
@@ -442,7 +453,8 @@ async def _handle_autopilot_confirm_callback(query, context):
 async def _handle_streamer_reset_callback(query, context):
     """Reset session when user taps the 'Reset session now' button in /streamer_mode."""
     context.user_data['plan_mode'] = False
-    await service.reset_session()
+    if not await _safe_reset_session(query):
+        return
     state = "ENABLED 📡" if service.streaming_enabled else "DISABLED 🔇"
     await query.edit_message_reply_markup(reply_markup=None)
     await query.message.reply_text(f"✅ Session reset — Streamer Mode is now {state}.")
@@ -456,7 +468,8 @@ async def _handle_mcp_callback(query, context):
     data = query.data
 
     if data == "mcp_reload":
-        await service.reset_session()
+        if not await _safe_reset_session(query):
+            return
         await query.edit_message_reply_markup(reply_markup=None)
         await query.message.reply_text("🔄 Session reloaded — MCP servers re-applied.")
         return
@@ -525,7 +538,9 @@ async def _apply_agent_selection(query, key: str) -> None:
         label = _html.escape(meta["name"])
         description = _html.escape(meta.get("description", ""))
 
-    await service.reset_session()
+    if not await _safe_reset_session(query):
+        return
+    service.save_prefs()
     await query.edit_message_text(
         f"🤖 <b>Agent:</b> {label}\n{description}\n\n⚠️ Session reset — ready to chat.",
         parse_mode="HTML",
@@ -556,8 +571,9 @@ async def _handle_agent_detail_callback(query, context):
 
     is_current = service.selected_agent == key
     select_label = "✅ Already selected" if is_current else "✅ Select"
+    model_line = f"\n🤖 Model: <code>{_html.escape(meta['model'])}</code>" if meta.get("model") else ""
     await query.edit_message_text(
-        f"{meta['icon']} <b>{_html.escape(meta['name'])}</b>\n\n{_html.escape(meta['description'])}",
+        f"{meta['icon']} <b>{_html.escape(meta['name'])}</b>{model_line}\n\n{_html.escape(meta['description'])}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton(select_label, callback_data=f"agent_select:{key}"),

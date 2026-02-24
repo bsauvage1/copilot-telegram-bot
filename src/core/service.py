@@ -27,6 +27,7 @@ from src.core.filesystem import get_directory_listing, get_project_structure, ge
 from src.core.usage import SessionUsageTracker, SessionInfo
 from src.core.events import EventHandlerMixin
 from src.core.session import SessionMixin
+from src.core.prefs import apply_prefs, save_prefs as _save_prefs
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.project_selected: bool = False
         self.project_name: str = ""
         self._tool_call_names: Dict[str, str] = {}
+        self._show_file_args: Dict[str, dict] = {}
         self.session_expired: bool = False
         self.session_end_callback: Optional[Callable[[str], Any]] = None
         self.allow_all_tools: bool = False
@@ -96,6 +98,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
+
+        # Restore persisted user preferences (model, effort, agent, mode, …)
+        apply_prefs(self)
+
+    def save_prefs(self) -> None:
+        """Persist current user preferences to disk."""
+        _save_prefs(self)
 
     # ── Working directory ─────────────────────────────────────────────
 
@@ -414,12 +423,28 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     async def get_cockpit_message(self, context_user_data: Optional[dict] = None) -> str:
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
+        from src.core.mcp_config import get_enabled_servers, load_config
         model = self.user_selected_model or self.current_model or "Auto"
-        mode = "Plan" if (context_user_data and context_user_data.get('plan_mode')) else "Chat"
+        # Use persisted agent_mode as source of truth; sync context flag for footer display
+        mode_map = {"plan": "Plan", "autopilot": "Autopilot"}
+        mode = mode_map.get(self.agent_mode, "Chat")
+        if context_user_data is not None:
+            context_user_data['plan_mode'] = (self.agent_mode == "plan")
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch = git_info[1:] if git_info else ""
         file_count, folder_count = get_project_stats(self.session_info.cwd)
+        effort = self.current_reasoning_effort or ""
+        all_servers = load_config()["mcpServers"]
+        mcp_enabled = len(get_enabled_servers())
+        mcp_total = len(all_servers)
+        # Get selected agent display name and total count
+        from src.core.agents import get_available_agents
+        agents = get_available_agents()
+        agent_name = ""
+        if self.selected_agent:
+            meta = next((a for a in agents if a["key"] == self.selected_agent), None)
+            agent_name = meta["name"] if meta else self.selected_agent
         return get_cockpit_content(
             project_name=self.project_name or Path(self.session_info.cwd).name,
             model=model,
@@ -428,6 +453,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             branch=branch,
             file_count=file_count,
             folder_count=folder_count,
+            effort=effort,
+            mcp_enabled=mcp_enabled,
+            mcp_total=mcp_total,
+            agent_name=agent_name,
+            agent_count=len(agents),
+            streaming=self.streaming_enabled,
+            allow_all_tools=self.allow_all_tools,
         )
 
     def get_directory_listing(self) -> str:

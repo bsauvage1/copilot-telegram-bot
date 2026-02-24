@@ -25,7 +25,7 @@ _ICON_RULES = [
 
 
 def _extract_field(content: str, field: str) -> Optional[str]:
-    match = re.search(rf"^{field}:\s*['\"]?(.*?)['\"]?\s*$", content, re.MULTILINE)
+    match = re.search(rf"^{re.escape(field)}:\s*['\"]?([^\n'\"]*?)['\"]?\s*$", content, re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
@@ -56,11 +56,13 @@ def get_available_agents() -> list[dict]:
         key = _agent_key(f)
         name = _extract_field(content, "name") or key
         description = _extract_field(content, "description") or ""
+        model = _extract_field(content, "model") or ""
         agents.append({
             "key": key,
             "name": name,
             "description": description,
             "icon": agent_icon(key, name, description),
+            "model": model,
         })
     return agents
 

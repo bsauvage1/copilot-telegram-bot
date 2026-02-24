@@ -214,17 +214,38 @@ def get_cockpit_content(
     branch: str,
     file_count: int,
     folder_count: int,
+    effort: str = "",
+    mcp_enabled: int = 0,
+    mcp_total: int = 0,
+    agent_name: str = "",
+    agent_count: int = 0,
+    streaming: bool = False,
+    allow_all_tools: bool = False,
 ) -> str:
-    """Cockpit message sent after project selection — stats + commands."""
+    """Cockpit message sent after project selection — stats + status."""
     branch_line = f"🔀 Branch: {branch}\n" if branch else ""
+    model_line = f"🤖 Model: {model}" + (f" [{effort}]" if effort else "") + "\n"
+    mode_suffix = f" ({'full' if allow_all_tools else 'limited'} permissions)" if mode == "Autopilot" else ""
+    mode_line = f"⚙️ Mode: {mode}{mode_suffix}\n"
+    if mcp_total:
+        mcp_line = f"🔌 MCP: {mcp_enabled} active · {mcp_total} available\n"
+    else:
+        mcp_line = ""
+    agent_label = agent_name if agent_name else "Default"
+    agent_suffix = f" · {agent_count} available" if agent_count else ""
+    agent_line = f"🧠 Agent: {agent_label}{agent_suffix}\n"
+    streaming_line = f"📡 Streaming: {'enabled' if streaming else 'disabled'}\n"
     return (
         f"✅ Project Loaded: {project_name}\n\n"
-        f"🤖 Model: {model}\n"
-        f"⚙️ Mode: {mode}\n"
+        f"{model_line}"
+        f"{mode_line}"
+        f"{agent_line}"
+        f"{mcp_line}"
+        f"{streaming_line}"
         f"📂 Path: {path}\n"
         f"{branch_line}"
         f"📊 Stats: {file_count} files · {folder_count} folders\n\n"
-        f"{_command_reference()}"
+        f"Type a message to start chatting, or /help for all commands."
     )
 
 

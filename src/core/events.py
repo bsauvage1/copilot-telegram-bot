@@ -15,7 +15,7 @@ class EventHandlerMixin:
     """Mixin providing SDK event routing and per-type handler methods.
 
     Expects the host class to have:
-      current_callback, _tool_call_names, completion_callback,
+      current_callback, _tool_call_names, _show_file_args, completion_callback,
       current_model, last_assistant_usage, last_session_usage
     """
 
@@ -71,6 +71,10 @@ class EventHandlerMixin:
             if tool_call_id and tool_name != "unknown":
                 self._tool_call_names[tool_call_id] = tool_name
 
+            # Capture show_file args so we have path/diff at complete time
+            if tool_name == "show_file" and tool_call_id and isinstance(args, dict):
+                self._show_file_args[tool_call_id] = args
+
             logger.info(f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args={args}")
 
             msg = format_tool_start(tool_name, args or {})
@@ -99,6 +103,19 @@ class EventHandlerMixin:
 
             if tool_call_id and tool_call_id in self._tool_call_names:
                 del self._tool_call_names[tool_call_id]
+
+            # show_file: send file content as a formatted code block to the user
+            if tool_name == "show_file" and result_content and self.current_callback:
+                sf_args = self._show_file_args.pop(tool_call_id, {}) if tool_call_id else {}
+                path = sf_args.get("path", "")
+                ext = path.rsplit(".", 1)[-1] if "." in path else ""
+                caption = f"`{path}`\n" if path else ""
+                # Telegram message limit ~4096 chars; reserve space for fences and caption
+                max_content = 3900 - len(caption)
+                body = result_content[:max_content] + ("\n… (truncated)" if len(result_content) > max_content else "")
+                formatted = f"{caption}```{ext}\n{body}\n```"
+                self._dispatch_async(self.current_callback, formatted)
+                return
 
             msg = format_tool_complete(tool_name, result_content)
             if msg and ctx.status_callback:
