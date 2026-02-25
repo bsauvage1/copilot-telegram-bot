@@ -13,5 +13,5 @@ wheels/
 .DS_Store
 .gemini/
 .docs
-copilot-instructions.md
+/copilot-instructions.md
 GEMINI.md
