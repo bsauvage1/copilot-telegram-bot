@@ -1,3 +1,7 @@
+---
+description: 'Single-user Telegram bot bridging GitHub Copilot CLI via the Python SDK'
+---
+
 # Copilot Instructions
 
 ## Running the Bot

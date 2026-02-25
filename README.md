@@ -168,6 +168,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/cockpit` | Re-display the session status card (model, mode, agent, MCP, workspace, branch, stats). |
 | `/ping` | Check CLI connectivity and measure latency. |
+| `/versions` | Show machine/runtime/latest CLI+SDK versions with upgrade and release-note links. |
 | `/update` | Update the Copilot CLI binary. |
 
 ## 🔧 Under the Hood

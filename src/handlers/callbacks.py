@@ -2,6 +2,7 @@ import logging
 import re
 from pathlib import Path
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 from src.config import WORKSPACE_PATH
@@ -23,69 +24,24 @@ async def _safe_reset_session(query) -> bool:
     return True
 
 
-async def _refresh_auth_info(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Refresh auth, CLI version and SDK version in context after service is started."""
-    from src.handlers.commands import _get_system_info
-    try:
-        cli_version, auth, sdk_version = await _get_system_info()
-        context.user_data['auth'] = auth
-        context.user_data['cli_version'] = cli_version
-        context.user_data['sdk_version'] = sdk_version
-    except Exception as e:
-        logger.debug(f"Auth/version refresh failed: {e}")
-
-
-def _build_project_selected_message(context: ContextTypes.DEFAULT_TYPE, project_name: str, action: str = "Selected") -> str:
-    """Build the edited start message shown after project selection/creation.
-    
-    Reuses version info stored in context.user_data by start_command.
-    """
-    auth = context.user_data.get('auth', 'Unknown')
-    cli_version = context.user_data.get('cli_version', 'Unknown')
-    sdk_version = context.user_data.get('sdk_version', 'Unknown')
-    return (
-        f"🚀 Copilot CLI-Telegram\n"
-        f"User: {auth}\n"
-        f"CLI version: {cli_version}\n"
-        f"SDK version: {sdk_version}\n"
-        f"✅ {action}: {project_name}"
-    )
-
-
-async def _build_project_selected_message_live(context: ContextTypes.DEFAULT_TYPE, project_name: str, action: str = "Selected") -> str:
-    """Like _build_project_selected_message but re-fetches versions live (service is running)."""
-    from src.handlers.commands import _get_system_info
-    cli_version, auth, sdk_version = await _get_system_info()
-    # Update cache so subsequent reads are consistent
-    context.user_data['cli_version'] = cli_version
-    context.user_data['auth'] = auth
-    context.user_data['sdk_version'] = sdk_version
-    return (
-        f"🚀 Copilot CLI-Telegram\n"
-        f"User: {auth}\n"
-        f"CLI version: {cli_version}\n"
-        f"SDK version: {sdk_version}\n"
-        f"✅ {action}: {project_name}"
-    )
-
-
 async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYPE, query=None):
-    """Common project-switching logic used by proj:, proj_granted:, and create_project_name.
-    
-    If `query` is provided (CallbackQuery), edits the original start message to remove the keyboard.
-    """
+    """Common project-switching logic used by proj:, proj_granted:, and create_project_name."""
     context.user_data['plan_mode'] = False
     await service.set_working_directory(str(path))
 
-    # Edit the start message to remove inline keyboard and show final status
+    # Delete the project selector card
     if query:
         try:
-            await _refresh_auth_info(context)
-            selected_msg = _build_project_selected_message(context, path.name, "Selected")
-            await query.edit_message_text(selected_msg)
+            await query.delete_message()
         except Exception as e:
-            logger.warning(f"⚠️ Failed to edit start message: {e}")
+            logger.warning(f"⚠️ Failed to delete selector card: {e}")
 
+    # Versions card (service is now running with correct CWD)
+    from src.handlers.commands import _build_versions_panel
+    text, keyboard = await _build_versions_panel()
+    await message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+    # Cockpit card
     cockpit = await service.get_cockpit_message(context.user_data)
     await message.reply_text(cockpit)
 
@@ -296,7 +252,17 @@ async def _handle_sessions_all_callback(query, context):
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
     folder = query.data.split(":")[1]
-    path = WORKSPACE_PATH / folder
+    path = (WORKSPACE_PATH / folder).resolve()
+    # Security: validate the resolved path stays within WORKSPACE_PATH
+    try:
+        path.relative_to(WORKSPACE_PATH.resolve())
+    except ValueError:
+        logger.warning(f"⚠️ Project traversal blocked: {folder!r} resolved to {path}")
+        await query.message.reply_text("⚠️ Invalid project path.")
+        return
+    if not path.is_dir():
+        await query.message.reply_text("⚠️ Project directory not found.")
+        return
     try:
         await _switch_project(path, query.message, context, query=query)
     except Exception as e:
@@ -680,6 +646,68 @@ async def _handle_agent_back_callback(query, context):
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
+async def _handle_versions_callback(query, refresh: bool = False):
+    """Handle versions_open / versions_refresh callbacks."""
+    from src.handlers.commands import _build_versions_panel
+    text, keyboard = await _build_versions_panel()
+    if refresh:
+        try:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        except BadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                raise
+    elif query.message:
+        await query.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await query.answer("Cannot open panel from this context", show_alert=True)
+
+
+async def _handle_changelog_callback(query, component: str):
+    """Fetch and display aggregated What's Changed for a component."""
+    if component not in {"cli", "sdk"}:
+        await query.answer("Unknown component", show_alert=True)
+        return
+    from src.handlers.commands import _fetch_whats_changed
+    from src.config import TELEGRAM_MSG_LIMIT
+    text = await _fetch_whats_changed(component)
+    if not query.message:
+        await query.answer("Cannot show changelog from this context", show_alert=True)
+        return
+    # Split on double-newline (release boundaries) to stay within Telegram limit
+    if len(text) <= TELEGRAM_MSG_LIMIT:
+        await query.message.reply_text(text, parse_mode="HTML")
+        return
+    chunks: list[str] = []
+    current_chunk = ""
+    limit = TELEGRAM_MSG_LIMIT - 30
+    for block in text.split("\n\n"):
+        candidate = f"{current_chunk}\n\n{block}" if current_chunk else block
+        if len(candidate) > limit:
+            if current_chunk:
+                chunks.append(current_chunk)
+            # If a single block exceeds limit, split it by lines
+            if len(block) > limit:
+                sub = ""
+                for line in block.split("\n"):
+                    sub_candidate = f"{sub}\n{line}" if sub else line
+                    if len(sub_candidate) > limit:
+                        if sub:
+                            chunks.append(sub)
+                        sub = line[:limit - 15] + "… (truncated)"
+                    else:
+                        sub = sub_candidate
+                current_chunk = sub
+            else:
+                current_chunk = block
+        else:
+            current_chunk = candidate
+    if current_chunk:
+        chunks.append(current_chunk)
+    for i, chunk in enumerate(chunks[:5]):
+        suffix = f"\n\n<i>({i + 1}/{min(len(chunks), 5)})</i>" if len(chunks) > 1 else ""
+        await query.message.reply_text(chunk + suffix, parse_mode="HTML")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -687,12 +715,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     logger.info(f"🎯 Query data: {query.data}")
 
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
-
     data = query.data
+
+    # For slow callbacks, show a loading toast instead of the generic empty answer
+    if data in {"versions_open", "versions_refresh"} or data.startswith("changelog:"):
+        try:
+            await query.answer("⏳ Fetching version info…")
+        except Exception as e:
+            logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
+    else:
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
 
     try:
         if data.startswith("perm:") or data.startswith("input:"):
@@ -716,6 +751,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _apply_agent_selection(query, data.split(":", 1)[1])
         elif data == "agent_back":
             await _handle_agent_back_callback(query, context)
+        elif data == "versions_open":
+            await _handle_versions_callback(query, refresh=False)
+        elif data == "versions_refresh":
+            await _handle_versions_callback(query, refresh=True)
+        elif data.startswith("changelog:"):
+            await _handle_changelog_callback(query, data.split(":", 1)[1])
         elif data == "streamer:reset":
             await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):
@@ -759,21 +800,17 @@ async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ Created: {name}")
     try:
         await _switch_project(path, update.message, context)
-        # Hide the inline keyboard on the original /start message
+        # Delete the project selector card (versions card persists separately)
         start_msg_id = context.user_data.pop('start_message_id', None)
         start_chat_id = context.user_data.pop('start_chat_id', None)
         if start_msg_id and start_chat_id:
             try:
-                await _refresh_auth_info(context)
-                action = "Selected" if already_exists else "Created"
-                selected_msg = _build_project_selected_message(context, name, action)
-                await context.bot.edit_message_text(
+                await context.bot.delete_message(
                     chat_id=start_chat_id,
                     message_id=start_msg_id,
-                    text=selected_msg,
                 )
             except Exception as e:
-                logger.warning(f"⚠️ Failed to edit start message: {e}")
+                logger.warning(f"⚠️ Failed to delete start message: {e}")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error setting directory: {e}")
     return ConversationHandler.END
@@ -786,12 +823,9 @@ async def cancel_create_project(update: Update, context: ContextTypes.DEFAULT_TY
     # Clean up stored message IDs
     context.user_data.pop('start_message_id', None)
     context.user_data.pop('start_chat_id', None)
-    from src.handlers.commands import build_main_menu
-    msg, keyboard, sys_info = await build_main_menu()
-    context.user_data['cli_version'] = sys_info[0]
-    context.user_data['auth'] = sys_info[1]
-    context.user_data['sdk_version'] = sys_info[2]
-    await update.message.reply_text(msg, reply_markup=keyboard)
+    from src.handlers.commands import build_start_menu
+    selector_text, selector_kb = await build_start_menu()
+    await update.message.reply_text(selector_text, reply_markup=selector_kb)
     return ConversationHandler.END
 
 

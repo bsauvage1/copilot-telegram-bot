@@ -468,10 +468,12 @@ class SessionMixin:
             logger.info(f"✅ Auto-approved allowlisted tool: {tool_name}")
             return {"permissionDecision": "allow"}
 
-        # Ask user for permission via interaction callback
+        # Ask user for permission via interaction callback.
+        # Deny-by-default is safe here: interaction_callback is only None outside
+        # of an active chat() call, when no tool execution should be happening.
         if not self.interaction_callback:
-            logger.warning(f"🟡 No interaction_callback, auto-approving: {tool_name}")
-            return {"permissionDecision": "allow"}
+            logger.warning(f"🔴 No interaction_callback registered — denying tool: {tool_name}")
+            return {"permissionDecision": "deny"}
 
         try:
             logger.info(f"🔔 Requesting user permission for tool: {tool_name}")

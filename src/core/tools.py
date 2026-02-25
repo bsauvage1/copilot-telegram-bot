@@ -1,4 +1,5 @@
 import os
+import stat
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -65,6 +66,12 @@ async def read_file(params: ReadFileParams) -> str:
     try:
         if not abs_target.exists():
             return f"Error: File not found: {params.path}"
+
+        # Security: reject special files (FIFOs, device nodes, etc.) that could
+        # block the event loop indefinitely when read synchronously.
+        stat_result = abs_target.stat()
+        if not stat.S_ISREG(stat_result.st_mode):
+            return "Error: Not a regular file (special/device files are not supported)."
 
         with open(abs_target, 'r', encoding='utf-8') as f:
             lines = f.readlines()

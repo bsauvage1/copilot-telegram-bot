@@ -50,6 +50,7 @@ else:
 
 DEFAULT_MODEL = "gpt-4.1"          # model used when user hasn't chosen one
 INTERACTION_TIMEOUT = 300          # seconds — timeout for user interactions (permission, input)
+CHAT_TIMEOUT = 600                 # seconds — overall timeout for a single chat round-trip
 MAX_TRACKED_FILES = 200            # max files tracked in SessionContext before pruning
 TRACKED_FILES_PRUNE_SIZE = 100     # keep last N files when pruning
 FILE_CONTENT_LIMIT = 100_000       # max characters when reading file content

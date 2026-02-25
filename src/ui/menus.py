@@ -194,20 +194,9 @@ def _command_reference() -> str:
         "➖ /remove_dir - Remove an extra directory\n\n"
         "Utilities\n"
         "🎛️ /cockpit - Show session status (model, mode, agent, MCP…)\n"
+        "🧭 /versions - Show local/runtime/latest version intelligence\n"
         "🏓 /ping - Check CLI connection status\n"
         "⬆️ /update - Update Copilot CLI\n"
-    )
-
-
-def get_start_splash_content(auth_status: str, cli_version: str, sdk_version: str = "") -> str:
-    """Minimal start splash — bot identity + project picker prompt. No commands."""
-    sdk_line = f"SDK version: {sdk_version}\n" if sdk_version else ""
-    return (
-        f"🚀 Copilot CLI-Telegram\n"
-        f"User: {auth_status}\n"
-        f"CLI version: {cli_version}\n"
-        f"{sdk_line}\n"
-        "⚠️ Select a project below to begin."
     )
 
 

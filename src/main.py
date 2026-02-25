@@ -24,8 +24,8 @@ from src.handlers.commands import (
     compact_command, review_command, changelog_command, streamer_mode_command,
     autopilot_command, mcp_command, agent_command,
     add_dir_command, list_dirs_command, remove_dir_command,
-    cockpit_command, skills_command,
-    build_main_menu
+    cockpit_command, skills_command, versions_command,
+    build_start_menu
 )
 from src.handlers.messages import chat_handler
 from src.handlers.callbacks import button_handler, create_project_name, WAITING_PROJECT_NAME, cancel_create_project, reject_command_during_creation
@@ -69,6 +69,7 @@ async def setup_bot_commands(application):
         BotCommand("list_dirs", "List project + extra directories"),
         BotCommand("remove_dir", "Remove an extra directory"),
         BotCommand("ping", "Check CLI connection status"),
+        BotCommand("versions", "Show local/runtime/latest versions + release notes"),
         BotCommand("update", "Update Copilot CLI"),
         BotCommand("streamer_mode", "Toggle live token streaming"),
         BotCommand("autopilot", "Switch agent mode: Interactive / Plan / Autopilot"),
@@ -95,8 +96,8 @@ async def post_init(application):
     
     if ALLOWED_USER_ID:
         try:
-            msg, keyboard, _ = await build_main_menu()
-            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard)
+            selector_text, selector_kb = await build_start_menu()
+            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=selector_text, reply_markup=selector_kb)
             
             # Set up session end notification callback
             async def notify_session_end(msg: str):
@@ -169,6 +170,7 @@ def main():
     app.add_handler(CommandHandler("sessions", sessions_command))
     app.add_handler(CommandHandler("infinite", infinite_command))
     app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("versions", versions_command))
     app.add_handler(CommandHandler("compact", compact_command))
     app.add_handler(CommandHandler("review", review_command))
     app.add_handler(CommandHandler("changelog", changelog_command))

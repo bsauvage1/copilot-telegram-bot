@@ -2,6 +2,7 @@ import uuid
 import asyncio
 import time
 import logging
+from pathlib import Path
 from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -93,6 +94,11 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             if not original_name:
                 ext = ".jpg" if update.message.photo else ""
                 original_name = f"file_{int(time.time())}{ext}"
+            # Security: strip directory components to prevent path traversal
+            # (e.g. file_name="../../.env" → ".env" → safe fallback)
+            original_name = Path(original_name).name.replace('\x00', '')
+            if not original_name:
+                original_name = f"upload_{int(time.time())}"
             temp_dir = service.get_temp_dir()
             download_path = temp_dir / original_name
             await file_obj.download_to_drive(custom_path=download_path)
@@ -254,11 +260,14 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         error_msg = str(e)
         logger.error(f"Chat Timeout Error: {error_msg}")
         await sender.delete_working()
-        if "session.idle" in error_msg:
-            user_msg = error_msg.replace("waiting for session.idle", "waiting for user selection")
-            await update.message.reply_text(f"⚠️ Error: {user_msg}")
-        else:
-            await update.message.reply_text(f"⚠️ Error: {error_msg}")
+        # Flush any response accumulated before the timeout
+        if service.streaming_enabled:
+            await sender.finalize_stream()
+        elif response_chunks:
+            partial = "".join(response_chunks)
+            if partial.strip():
+                await sender.send_response(partial)
+        await update.message.reply_text("⚠️ Response timed out — partial result may appear above.")
     except Exception as e:
         logger.error(f"Chat Error: {e}")
         await sender.delete_working()

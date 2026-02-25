@@ -76,7 +76,11 @@ class EventHandlerMixin:
             if tool_name == "show_file" and tool_call_id and isinstance(args, dict):
                 self._show_file_args[tool_call_id] = args
 
-            logger.info(f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args={args}")
+            # Log tool names and call IDs at INFO; full args only at DEBUG
+            # to avoid leaking sensitive content (file_text, secrets) to log files.
+            args_keys = list((args or {}).keys())
+            logger.info(f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args_keys={args_keys}")
+            logger.debug(f"TOOL START args: {tool_name} call_id={tool_call_id} args={args}")
 
             msg = format_tool_start(tool_name, args or {})
             if parent_tool_call_id:

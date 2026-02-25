@@ -31,9 +31,15 @@ def extract_summary(content: str) -> str:
             m = re.search(r"^description:\s*['\"]?(.+?)['\"]?\s*$", frontmatter, re.MULTILINE)
             if m:
                 return m.group(1).strip()[:120]
-    # Fallback: first non-empty, non-heading, non-frontmatter line
+    # Fallback: first non-empty, non-heading, non-frontmatter line outside code fences
+    in_fence = False
     for line in stripped.splitlines():
         line = line.strip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         if line and not line.startswith("#") and not line.startswith("---") and not line.startswith("applyTo:"):
             return line[:120]
     return ""

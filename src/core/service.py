@@ -19,7 +19,7 @@ from src.config import (
     WORKSPACE_PATH,
     GITHUB_TOKEN,
     DEFAULT_MODEL,
-    INTERACTION_TIMEOUT,
+    CHAT_TIMEOUT,
 )
 from src.core.context import ctx
 from src.core.git import get_git_info as _get_git_info
@@ -31,6 +31,15 @@ from src.core.prefs import apply_prefs, save_prefs as _save_prefs
 from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path
 
 logger = logging.getLogger(__name__)
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """Check if path is within root directory (both must be resolved)."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 class _RequestWrapper:
@@ -118,6 +127,12 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         p = Path(path).expanduser().resolve()
         if not p.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
+
+        # Defense-in-depth: ensure the resolved path is within an allowed root.
+        from src.config import GRANTED_PROJECT_PATHS
+        allowed_roots = [WORKSPACE_PATH.resolve()] + [gp.resolve() for gp in GRANTED_PROJECT_PATHS]
+        if not any(_is_within(p, root) for root in allowed_roots):
+            raise PermissionError(f"Path is outside allowed workspace boundaries: {p}")
 
         current_root = ctx.root_path
         logger.info(f"📂 Requested CWD change: {current_root} -> {p}")
@@ -285,23 +300,20 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     # ── CLI / auth helpers ────────────────────────────────────────────
 
     async def get_cli_version(self) -> str:
-        """Get Copilot CLI version from SDK status, with shell fallback."""
-        try:
-            status = await self.client.get_status()
-            if hasattr(status, 'version') and status.version:
-                return status.version
-        except Exception as e:
-            logger.debug(f"SDK get_status() failed: {e}")
-
-        # Shell fallback — try explicit path first, then bare command
-        cli_path = (
-            shutil.which("copilot")
-            or os.path.expanduser("~/.local/bin/copilot")
+        """Get Copilot CLI version from the configured binary, with SDK fallback."""
+        client_options = getattr(self.client, "options", None)
+        configured_cli = (
+            client_options.get("cli_path")
+            if isinstance(client_options, dict)
+            else getattr(client_options, "cli_path", None)
         )
-        for cmd in [f'"{cli_path}" --version', "copilot --version"]:
+        discovered_cli = shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+        cli_candidates = [c for c in (configured_cli, discovered_cli) if c]
+
+        for cli_candidate in cli_candidates:
             try:
-                proc = await asyncio.create_subprocess_shell(
-                    cmd,
+                proc = await asyncio.create_subprocess_exec(
+                    cli_candidate, "--version",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -309,8 +321,16 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 match = re.search(r"(\d+\.\d+\.\d+)", stdout.decode())
                 if match:
                     return match.group(1)
-            except Exception:
-                continue
+            except Exception as e:
+                logger.debug(f"CLI --version failed ({cli_candidate}): {e}")
+
+        try:
+            status = await self.client.get_status()
+            if hasattr(status, 'version') and status.version:
+                return status.version
+        except Exception as e:
+            logger.debug(f"SDK get_status() failed: {e}")
+
         return "unknown"
 
     async def get_auth_status(self) -> str:
@@ -522,7 +542,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 msg_options: dict = {"prompt": user_message}
                 if attachments:
                     msg_options["attachments"] = attachments
-                await self.session.send_and_wait(msg_options, timeout=INTERACTION_TIMEOUT)
+                await self.session.send_and_wait(msg_options, timeout=CHAT_TIMEOUT)
                 # abort() causes send_and_wait to return normally once session.idle fires
                 if self._cancelled:
                     raise asyncio.CancelledError("Request cancelled by user")

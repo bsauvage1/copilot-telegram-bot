@@ -1,10 +1,15 @@
 import asyncio
 import html
+import json
 import logging
 import os
 import re
+import time
+import urllib.request
 from pathlib import Path
+from typing import Any
 from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -18,6 +23,292 @@ from src.ui.formatters import format_tokens, format_percentage, get_model_contex
 
 logger = logging.getLogger(__name__)
 
+_LATEST_CACHE_TTL_SECONDS = 3600
+_LATEST_CACHE_ERROR_TTL_SECONDS = 60
+_LATEST_CACHE: dict[str, Any] = {"expires_at": 0.0, "data": None}
+
+
+def _extract_version(version_text: str) -> str:
+    match = re.search(r"(\d+\.\d+\.\d+)", version_text or "")
+    return match.group(1) if match else "unknown"
+
+
+def _is_prerelease(version_text: str) -> bool:
+    """Return True if the raw version string contains a pre-release suffix."""
+    match = re.search(r"\d+\.\d+\.\d+([._-]?\w+)", version_text or "")
+    if not match:
+        return False
+    suffix = match.group(1)
+    return bool(re.match(r"[._-]?(alpha|beta|rc|dev|pre|snapshot)", suffix, re.IGNORECASE))
+
+
+def _parse_version(version_text: str) -> tuple[int, int, int] | None:
+    ver = _extract_version(version_text)
+    if ver == "unknown":
+        return None
+    try:
+        major, minor, patch = ver.split(".")
+        return int(major), int(minor), int(patch)
+    except Exception:
+        return None
+
+
+def _compare_versions(current: str, latest: str) -> str:
+    cur = _parse_version(current)
+    lat = _parse_version(latest)
+    if not cur or not lat:
+        return "unknown"
+    if cur < lat:
+        return "outdated"
+    if cur > lat:
+        return "ahead"
+    # Same numeric triple — pre-release is older than stable
+    if _is_prerelease(current) and not _is_prerelease(latest):
+        return "outdated"
+    return "current"
+
+
+def _make_compare_url(repo: str, from_version: str, to_version: str) -> str | None:
+    frm = _extract_version(from_version)
+    to = _extract_version(to_version)
+    if "unknown" in {frm, to} or frm == to:
+        return None
+    return f"https://github.com/{repo}/compare/v{frm}...v{to}"
+
+
+def _fetch_json_sync(url: str, timeout: float = 5.0) -> dict:
+    req = urllib.request.Request(url, headers={"User-Agent": "copilot-telegram-bot"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+async def _fetch_json(url: str, timeout: float = 5.0) -> dict:
+    return await asyncio.to_thread(_fetch_json_sync, url, timeout)
+
+
+_latest_versions_lock = asyncio.Lock()
+
+async def _get_latest_versions() -> dict[str, str]:
+    now = time.time()
+    cached = _LATEST_CACHE.get("data")
+    if cached and now < float(_LATEST_CACHE.get("expires_at", 0.0)):
+        return cached
+
+    async with _latest_versions_lock:
+        # Re-check after acquiring lock — another coroutine may have refreshed
+        cached = _LATEST_CACHE.get("data")
+        if cached and time.time() < float(_LATEST_CACHE.get("expires_at", 0.0)):
+            return cached
+
+        latest = {
+            "cli_latest": "unknown",
+            "sdk_latest": "unknown",
+            "cli_release_url": "https://github.com/github/copilot-cli/releases",
+            "sdk_release_url": "https://github.com/github/copilot-sdk/releases",
+        }
+
+        cli_task = _fetch_json("https://api.github.com/repos/github/copilot-cli/releases/latest")
+        sdk_release_task = _fetch_json("https://api.github.com/repos/github/copilot-sdk/releases/latest")
+        sdk_pypi_task = _fetch_json("https://pypi.org/pypi/github-copilot-sdk/json")
+
+        cli_json, sdk_release_json, sdk_pypi_json = await asyncio.gather(
+            cli_task, sdk_release_task, sdk_pypi_task, return_exceptions=True
+        )
+
+        if isinstance(cli_json, dict):
+            latest["cli_latest"] = _extract_version(cli_json.get("tag_name", ""))
+            latest["cli_release_url"] = cli_json.get("html_url") or latest["cli_release_url"]
+
+        if isinstance(sdk_release_json, dict):
+            latest["sdk_latest"] = _extract_version(sdk_release_json.get("tag_name", ""))
+            latest["sdk_release_url"] = sdk_release_json.get("html_url") or latest["sdk_release_url"]
+        if latest["sdk_latest"] == "unknown" and isinstance(sdk_pypi_json, dict):
+            latest["sdk_latest"] = _extract_version(sdk_pypi_json.get("info", {}).get("version", ""))
+            latest["sdk_release_url"] = "https://pypi.org/project/github-copilot-sdk/#history"
+
+        _LATEST_CACHE["data"] = latest
+        got_real_data = latest["cli_latest"] != "unknown" or latest["sdk_latest"] != "unknown"
+        ttl = _LATEST_CACHE_TTL_SECONDS if got_real_data else _LATEST_CACHE_ERROR_TTL_SECONDS
+        _LATEST_CACHE["expires_at"] = time.time() + ttl
+        return latest
+
+
+
+_REPO_MAP = {
+    "cli": "github/copilot-cli",
+    "sdk": "github/copilot-sdk",
+}
+
+
+async def _fetch_whats_changed(component: str) -> str:
+    """Fetch and aggregate 'What's Changed' sections from GitHub releases between current and latest."""
+    s = await _get_version_snapshot()
+    if component == "cli":
+        current, latest = s["local_cli"], s["cli_latest"]
+        label = "CLI"
+    else:
+        current, latest = s["sdk_installed"], s["sdk_latest"]
+        label = "SDK"
+
+    cur = _parse_version(current)
+    lat = _parse_version(latest)
+    if not cur or not lat or cur >= lat:
+        return f"✅ {label} is already up to date ({current})."
+
+    repo = _REPO_MAP.get(component, _REPO_MAP["cli"])
+    try:
+        releases = await _fetch_json(f"https://api.github.com/repos/{repo}/releases?per_page=50")
+    except Exception as e:
+        logger.warning(f"Failed to fetch releases for {repo}: {e}")
+        return "⚠️ Could not fetch release info from GitHub. Try again later."
+
+    if not isinstance(releases, list):
+        return "⚠️ Unexpected response from GitHub API."
+
+    # Filter releases between current (exclusive) and latest (inclusive)
+    relevant = []
+    for rel in releases:
+        tag = rel.get("tag_name", "")
+        ver = _parse_version(_extract_version(tag))
+        if ver and cur < ver <= lat:
+            relevant.append(rel)
+
+    if not relevant:
+        return f"No releases found between {current} and {latest}."
+
+    # Sort oldest → newest
+    relevant.sort(key=lambda r: _parse_version(_extract_version(r.get("tag_name", ""))) or (0, 0, 0))
+
+    sections: list[str] = []
+    for rel in relevant:
+        tag = rel.get("tag_name", "")
+        body = rel.get("body", "") or ""
+        # Extract "What's Changed" section from markdown body
+        changes = _extract_changes_section(body)
+        if changes:
+            sections.append(f"<b>{html.escape(tag)}</b>\n{changes}")
+        else:
+            # Fallback: use release name
+            name = rel.get("name", tag)
+            sections.append(f"<b>{html.escape(name)}</b>\n<i>(no changelog body)</i>")
+
+    header = f"📋 <b>{label} Changes: {html.escape(current)} → {html.escape(latest)}</b>\n"
+    return header + "\n\n".join(sections)
+
+
+def _extract_changes_section(body: str) -> str:
+    """Extract the 'What's Changed' section from a GitHub release body (markdown → HTML-safe)."""
+    # Look for "What's Changed" or "## What's Changed" header
+    pattern = r"(?:^|\n)(?:#{1,3}\s*)?What'?s Changed\s*\n(.*?)(?=\n#{1,3}\s|\n\*\*Full Changelog\*\*|\Z)"
+    m = re.search(pattern, body, re.DOTALL | re.IGNORECASE)
+    if m:
+        section = m.group(1).strip()
+    else:
+        # No header found — use the whole body if short enough
+        section = body.strip()
+        if not section:
+            return ""
+
+    # Convert markdown bullet links to plain text for Telegram
+    # "* fix thing by @user in https://..." → "• fix thing"
+    lines = []
+    for line in section.splitlines():
+        line = line.strip()
+        if not line or line.startswith("**Full Changelog**"):
+            continue
+        # Strip "* " or "- " prefix, convert PR links
+        cleaned = re.sub(r"^[*\-]\s*", "• ", line)
+        cleaned = re.sub(r"\s+by\s+@\S+\s+in\s+https?://\S+", "", cleaned)
+        cleaned = re.sub(r"\s+in\s+https?://\S+", "", cleaned)
+        cleaned = re.sub(r"https?://\S+", "", cleaned)
+        if cleaned.strip() and cleaned.strip() != "•":
+            lines.append(html.escape(cleaned))
+    return "\n".join(lines) if lines else ""
+
+
+async def _get_version_snapshot() -> dict[str, Any]:
+    local_cli = await service.get_cli_version()
+    sdk_installed = _get_sdk_version()
+    latest = await _get_latest_versions()
+
+    cli_state = _compare_versions(local_cli, latest["cli_latest"])
+    sdk_state = _compare_versions(sdk_installed, latest["sdk_latest"])
+
+    return {
+        "local_cli": local_cli,
+        "sdk_installed": sdk_installed,
+        "cli_latest": latest["cli_latest"],
+        "sdk_latest": latest["sdk_latest"],
+        "cli_state": cli_state,
+        "sdk_state": sdk_state,
+        "cli_release_url": latest["cli_release_url"],
+        "sdk_release_url": latest["sdk_release_url"],
+        "cli_compare_url": _make_compare_url("github/copilot-cli", local_cli, latest["cli_latest"]),
+        "sdk_compare_url": _make_compare_url("github/copilot-sdk", sdk_installed, latest["sdk_latest"]),
+    }
+
+
+async def _build_versions_panel() -> tuple[str, InlineKeyboardMarkup]:
+    s = await _get_version_snapshot()
+
+    def _ver_line(label: str, installed: str, latest: str, state: str) -> str:
+        inst = html.escape(installed)
+        lat = html.escape(latest)
+        if state == "current":
+            return f"• {label}: {inst} ✅"
+        if state == "outdated":
+            return f"• {label}: {inst} · latest <b>{lat}</b> ⬆️"
+        if state == "ahead":
+            return f"• {label}: {inst} · latest {lat} 🔮"
+        return f"• {label}: {inst} · latest {lat}"
+
+    cli_state = s["cli_state"]
+    sdk_state = s["sdk_state"]
+
+    lines = [
+        "🧭 <b>Version Intel</b>",
+        _ver_line("CLI", s["local_cli"], s["cli_latest"], cli_state),
+        _ver_line("SDK", s["sdk_installed"], s["sdk_latest"], sdk_state),
+    ]
+
+    # Upgrade commands (only when something needs action)
+    cmds: list[str] = []
+    if cli_state == "outdated":
+        cmds.append("<code>copilot update</code>")
+    if sdk_state == "outdated":
+        target = html.escape(s["sdk_latest"]) if s["sdk_latest"] != "unknown" else "latest"
+        cmds.append(f'<code>uv add "github-copilot-sdk=={target}"</code>')
+    if cmds:
+        lines.append("")
+        lines.append("📦 <b>Upgrade commands:</b>")
+        lines.extend(f"  {c}" for c in cmds)
+    else:
+        lines.append("")
+        lines.append("✅ Everything is up to date.")
+
+    # Buttons: col1 = release notes, col2 = changes (conditional)
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    # CLI row
+    if s["cli_compare_url"]:
+        buttons.append([
+            InlineKeyboardButton("📄 CLI Notes", url=s["cli_release_url"]),
+            InlineKeyboardButton("📋 CLI Changes", callback_data="changelog:cli"),
+        ])
+    else:
+        buttons.append([InlineKeyboardButton("📄 CLI Notes", url=s["cli_release_url"])])
+
+    # SDK row
+    if s["sdk_compare_url"]:
+        buttons.append([
+            InlineKeyboardButton("📄 SDK Notes", url=s["sdk_release_url"]),
+            InlineKeyboardButton("📋 SDK Changes", callback_data="changelog:sdk"),
+        ])
+    else:
+        buttons.append([InlineKeyboardButton("📄 SDK Notes", url=s["sdk_release_url"])])
+
+    return "\n".join(lines), InlineKeyboardMarkup(buttons)
+
 
 def _get_sdk_version() -> str:
     """Get copilot SDK package version."""
@@ -28,54 +319,26 @@ def _get_sdk_version() -> str:
         return "unknown"
 
 
-async def _get_system_info() -> tuple[str, str, str]:
-    """Get CLI version, auth status, and SDK version with error handling."""
-    sdk_version = _get_sdk_version()
-    
-    # Get CLI version (works without service running via shell fallback)
-    cli_version = "Unknown"
-    try:
-        cli_version = await service.get_cli_version()
-    except Exception as e:
-        logger.warning(f"Failed to get CLI version: {e}")
-    
-    # Get auth status only if service is already running (avoids premature startup)
-    auth = "User"
-    try:
-        if service._is_running:
-            auth = await service.get_auth_status()
-        else:
-            # Don't start service just for auth check at startup
-            logger.debug("Service not running yet, skipping auth check")
-    except Exception as e:
-        logger.warning(f"Failed to get auth status: {e}")
-    
-    return cli_version, auth, sdk_version
-
-
 # --- Handlers ---
 
-async def build_main_menu() -> tuple:
-    """Build main menu message and keyboard. Shared by start_command and post_init.
+async def build_start_menu() -> tuple[str, InlineKeyboardMarkup]:
+    """Build the project selector card for /start.
     
-    Returns (message_text, keyboard, (cli_version, auth, sdk_version)).
+    Returns (selector_text, selector_keyboard).
     """
-    from src.ui.menus import get_start_splash_content, get_project_keyboard
-    cli_version, auth, sdk_version = await _get_system_info()
-    msg = get_start_splash_content(auth, cli_version, sdk_version)
+    from src.ui.menus import get_project_keyboard
     keyboard = get_project_keyboard(WORKSPACE_PATH)
-    return msg, keyboard, (cli_version, auth, sdk_version)
+    return "📂 Select a project below to begin.", keyboard
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start command received")
     if not await security_check(update): return
-    msg, keyboard, sys_info = await build_main_menu()
-    # Store version info for reuse when editing start message after project selection
-    context.user_data['cli_version'] = sys_info[0]
-    context.user_data['auth'] = sys_info[1]
-    context.user_data['sdk_version'] = sys_info[2]
-    await update.message.reply_text(msg, reply_markup=keyboard)
+    selector_text, selector_kb = await build_start_menu()
+    # Project selector card (deleted on selection)
+    sel_msg = await update.message.reply_text(selector_text, reply_markup=selector_kb)
+    context.user_data['start_message_id'] = sel_msg.message_id
+    context.user_data['start_chat_id'] = sel_msg.chat_id
     return ConversationHandler.END
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -514,6 +777,13 @@ async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(msg, parse_mode="HTML")
 
 
+async def versions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show machine/runtime versions, latest releases, and upgrade links."""
+    if not await security_check(update): return
+    text, keyboard = await _build_versions_panel()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Update the Copilot CLI to the latest version."""
     if not await security_check(update): return
@@ -929,4 +1199,3 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     disabled = set(get_disabled_skills())
     text, markup = build_skills_panel(skills, disabled, workspace)
     await msg.edit_text(text, parse_mode="HTML", reply_markup=markup)
-
