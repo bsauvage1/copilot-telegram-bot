@@ -32,6 +32,7 @@ class MessageSender:
         self._stream_msg: Message | None = None   # Live-edited streaming message
         self._stream_buf: str = ""                # Accumulated streaming text
         self._stream_last_edit: float = 0.0       # Timestamp of last edit
+        self._stream_creating: bool = False       # Guard: a task is creating _stream_msg
         self._STREAM_DEBOUNCE = 1.0               # Minimum seconds between edits
         self._working_last_edit: float = 0.0      # Timestamp of last Working card edit
         self._working_first_pending: float = 0.0  # When the oldest unsent update arrived
@@ -169,6 +170,11 @@ class MessageSender:
 
         Delays creating the streaming card until we have meaningful visible content,
         so that early tool-use deltas (JSON fragments) don't suppress the Working card.
+
+        Uses _stream_creating guard to prevent duplicate card creation.
+        _dispatch_async fires each delta as a separate asyncio.Task; without the
+        guard, multiple tasks can see _stream_msg as None during the first
+        send_message await and each create a new Telegram message.
         """
         self._stream_buf += chunk
         now = _time_mod.monotonic()
@@ -189,6 +195,11 @@ class MessageSender:
             preview = "…" + preview[-self._STREAM_PREVIEW_LIMIT:]
 
         if not self._stream_msg:
+            # Guard: another task is already creating the message — skip.
+            # The chunk is buffered in _stream_buf and will appear in the next edit.
+            if self._stream_creating:
+                return
+            self._stream_creating = True
             # Resume: record how long the interaction wait took
             if self._interaction_start is not None:
                 self._interaction_wait += _time_mod.monotonic() - self._interaction_start
@@ -198,9 +209,11 @@ class MessageSender:
             try:
                 safe = html_lib.escape(preview)
                 self._stream_msg = await self.chat.send_message(safe, parse_mode=ParseMode.HTML)
-                self._stream_last_edit = _time_mod.monotonic()
             except Exception as e:
                 logger.debug(f"Stream start failed: {e}")
+            finally:
+                self._stream_creating = False
+                self._stream_last_edit = _time_mod.monotonic()
         else:
             try:
                 safe = html_lib.escape(preview)
@@ -208,9 +221,10 @@ class MessageSender:
                     self._stream_msg.edit_text(safe, parse_mode=ParseMode.HTML),
                     timeout=10.0,
                 )
-                self._stream_last_edit = _time_mod.monotonic()
             except Exception as e:
                 logger.debug(f"Stream edit failed: {e}")
+            finally:
+                self._stream_last_edit = _time_mod.monotonic()
 
     async def finalize_stream(self, footer: str = ""):
         """Finalize the Working card and send the full response as new messages."""
