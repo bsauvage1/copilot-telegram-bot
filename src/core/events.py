@@ -82,9 +82,13 @@ class EventHandlerMixin:
             logger.info(f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args_keys={args_keys}")
             logger.debug(f"TOOL START args: {tool_name} call_id={tool_call_id} args={args}")
 
-            msg = format_tool_start(tool_name, args or {})
+            # Skip child tool events (those inside subagents) to match CLI
+            # behavior — the CLI only shows agent lifecycle, not individual
+            # view/grep/bash calls within each agent.
             if parent_tool_call_id:
-                msg = "  " + msg
+                return
+
+            msg = format_tool_start(tool_name, args or {})
 
             if ctx.status_callback:
                 self._dispatch_async(ctx.status_callback, msg)
@@ -125,8 +129,9 @@ class EventHandlerMixin:
             max_len = None if streaming_mode_var.get() else 100
             msg = format_tool_complete(tool_name, result_content, max_result_length=max_len)
             if msg and ctx.status_callback:
+                # Skip child tool completions (inside subagents) to match CLI.
                 if parent_tool_call_id:
-                    msg = "  " + msg
+                    return
                 self._dispatch_async(ctx.status_callback, msg)
         except Exception as e:
             logger.error(f"Error handling TOOL_EXECUTION_COMPLETE: {e}")
@@ -147,7 +152,10 @@ class EventHandlerMixin:
             result = getattr(event.data, 'result', None)
             result_content = result.content if result and hasattr(result, 'content') else None
             if result_content:
-                snippet = result_content if streaming_mode_var.get() else truncate_text(result_content, 100)
+                # In streaming mode, keep snippet short for the Working card;
+                # the full result will appear in the final streamed response.
+                # In non-streaming mode, show full result (it's the only output users see).
+                snippet = truncate_text(result_content, 120) if streaming_mode_var.get() else result_content
                 msg = f"✓ {display_name} → {snippet}"
             else:
                 msg = f"✓ {display_name} completed"

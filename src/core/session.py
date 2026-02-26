@@ -4,12 +4,12 @@ import asyncio
 import time
 import uuid
 import logging
+from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
 from src.config import (
     DEFAULT_MODEL,
-    GITHUB_TOKEN,
     INTERACTION_TIMEOUT,
     PERMISSION_TIMEOUT,
 )
@@ -77,7 +77,7 @@ def _load_instructions(cwd: str | None) -> str:
     """
     proj_path = project_instructions_path(cwd)
     candidates = [
-        ("User instructions",  USER_INSTRUCTIONS_PATH, USER_INSTRUCTIONS_PATH.parent),
+        ("User instructions",  USER_INSTRUCTIONS_PATH, Path.home()),
         ("Project instructions", proj_path, proj_path.parent if proj_path else None),
     ]
     parts: list[str] = []

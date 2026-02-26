@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 
 from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
-from src.core.context import ctx, streaming_mode
+from src.core.context import streaming_mode
 from src.ui.streamer import MessageSender
 
 from src.handlers.utils import security_check, check_project_selected
@@ -71,8 +71,10 @@ def cleanup_pending_interactions():
         logger.info(f"Cleaned up {len(to_remove)} pending interactions")
 
 async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str = None):
-    if not await security_check(update): return
-    if not await check_project_selected(update): return
+    if not await security_check(update): 
+        return
+    if not await check_project_selected(update): 
+        return
     
     if service.session_expired:
         await update.message.reply_text("⚠️ Session expired. Use /start to begin a new session.")
@@ -111,7 +113,8 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             await update.message.reply_text(f"⚠️ Upload failed: {e}")
             return
             
-    if not user_text: return
+    if not user_text: 
+        return
 
     if context.user_data.get('plan_mode'):
         user_text = _PLAN_PROMPT + user_text
@@ -132,7 +135,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         nonlocal tool_event_count
         if not status:  # Empty status = clear signal, ignore
             return
-        logger.debug(f"🔍 tool_log received: {repr(status)}")
+        logger.debug(f"🔍 tool_log received (streaming={service.streaming_enabled}): {repr(status[:80])}")
         if service.streaming_enabled:
             await sender.update_working(status)  # Edit Working... card in-place
         else:
@@ -241,7 +244,9 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         
         # Wait for completion signal
         try:
-            await asyncio.wait_for(completion_event.wait(), timeout=2.0)
+            # SDK fires SESSION_IDLE after all tool chains complete; 5s allows
+            # for multi-step tool chains and compaction events before we finalize.
+            await asyncio.wait_for(completion_event.wait(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.warning("Completion event timeout — proceeding")
         

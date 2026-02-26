@@ -48,14 +48,23 @@ def extract_summary(content: str) -> str:
 def safe_read_instructions(path: Path | None, allowed_root: Path | None) -> str | None:
     """Read an instructions file after validating it stays within allowed_root.
 
+    Security: when the file is a symlink, the resolved target must also have a
+    .md extension. This allows symlinked instructions (e.g. from a dotfiles repo)
+    while preventing exfiltration of sensitive files like ~/.ssh/id_rsa.
+
     Returns the file contents (stripped), EMPTY_FILE_SENTINEL for empty files,
     or None if the file should be skipped (missing, symlink escape, unreadable).
     """
     if not path or not allowed_root or not path.is_file():
         return None
     try:
-        if not path.resolve().is_relative_to(allowed_root.resolve()):
+        resolved = path.resolve()
+        if not resolved.is_relative_to(allowed_root.resolve()):
             logger.warning(f"Skipping instructions file: {path} resolves outside {allowed_root}")
+            return None
+        # Symlink target must be a .md file to prevent reading arbitrary files
+        if path.is_symlink() and resolved.suffix.lower() != ".md":
+            logger.warning(f"Skipping instructions symlink: {path} → {resolved} (not a .md file)")
             return None
     except (OSError, ValueError):
         return None

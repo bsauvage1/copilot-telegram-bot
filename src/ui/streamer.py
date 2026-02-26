@@ -33,6 +33,10 @@ class MessageSender:
         self._stream_buf: str = ""                # Accumulated streaming text
         self._stream_last_edit: float = 0.0       # Timestamp of last edit
         self._STREAM_DEBOUNCE = 1.0               # Minimum seconds between edits
+        self._working_last_edit: float = 0.0      # Timestamp of last Working card edit
+        self._working_first_pending: float = 0.0  # When the oldest unsent update arrived
+        self._WORKING_DEBOUNCE = 2.0              # Min seconds between Working card edits
+        self._WORKING_MAX_STALE = 6.0             # Force update after this many seconds
         self._start_time: float = _time_mod.monotonic()  # For elapsed time in final response
         self._interaction_wait: float = 0.0               # Seconds spent waiting for user interaction
         self._interaction_start: float | None = None      # When current interaction started
@@ -44,12 +48,20 @@ class MessageSender:
     async def update_working(self, detail: str):
         """Append tool status to the Working... card (streaming mode).
         Accumulates all events and shows a tail window so the card never exceeds
-        Telegram's limit. Once the streaming card is live, events are silently dropped."""
-        if self._stream_msg:
-            logger.debug(f"Stream live — dropping tool event: {detail[:80]}")
-            return
-
+        Telegram's limit. Debounced to avoid Telegram rate-limit on edits.
+        When streaming is live, events are still buffered (for finalize_working_card)
+        but we skip editing since the streaming card is the active display."""
         self._working_buf += ("\n" if self._working_buf else "") + detail
+
+        # Cap buffer to prevent unbounded growth during long sessions
+        if len(self._working_buf) > self._STREAM_PREVIEW_LIMIT:
+            self._working_buf = self._working_buf[-self._STREAM_PREVIEW_LIMIT:]
+
+        # If the streaming card is live, the Working card is not the active
+        # display — skip editing; finalize_working_card will show the log.
+        if self._stream_msg:
+            logger.debug(f"update_working: buffered (stream live): {detail[:60]}")
+            return
 
         # Show tail so the card stays within Telegram's limit
         preview = self._working_buf
@@ -57,7 +69,20 @@ class MessageSender:
             preview = "…\n" + preview[-self._STREAM_PREVIEW_LIMIT:]
 
         safe = html_lib.escape(preview)
+        now = _time_mod.monotonic()
         if self._working_msg:
+            # Debounce: skip the edit if we edited too recently,
+            # but force an update after _WORKING_MAX_STALE seconds since the
+            # first pending (unsent) event to avoid indefinitely stale displays.
+            elapsed_since_edit = now - self._working_last_edit
+            if elapsed_since_edit < self._WORKING_DEBOUNCE:
+                if not self._working_first_pending:
+                    self._working_first_pending = now
+                if (now - self._working_first_pending) < self._WORKING_MAX_STALE:
+                    logger.debug(f"update_working: debounced ({elapsed_since_edit:.1f}s < {self._WORKING_DEBOUNCE}s)")
+                    return
+            self._working_last_edit = now
+            self._working_first_pending = 0.0
             try:
                 await asyncio.wait_for(
                     self._working_msg.edit_text(safe, parse_mode=ParseMode.HTML),
@@ -66,6 +91,8 @@ class MessageSender:
             except Exception as e:
                 logger.debug(f"Could not update working message: {e}")
         else:
+            self._working_last_edit = now
+            self._working_first_pending = 0.0
             try:
                 self._working_msg = await self._send_message_return(safe)
             except Exception as e:
@@ -103,6 +130,34 @@ class MessageSender:
             finally:
                 self._working_msg = None
 
+    async def _finalize_working_card(self):
+        """Edit the Working card to show the final tool-event log.
+
+        If there were no tool events (just the initial 'Working...'), delete it
+        instead of leaving a meaningless card.
+        """
+        if not self._working_msg:
+            return
+        if not self._working_buf.strip():
+            # No tool events accumulated — just delete the bare 'Working...' card
+            await self.delete_working()
+            return
+        # Finalize: just show the tool-event log (no elapsed footer — avoids
+        # Telegram re-focusing the Working card instead of the new response below).
+        final = self._working_buf
+        if len(final) > self._STREAM_PREVIEW_LIMIT:
+            final = "…\n" + final[-self._STREAM_PREVIEW_LIMIT:]
+        try:
+            safe = html_lib.escape(final)
+            await asyncio.wait_for(
+                self._working_msg.edit_text(safe, parse_mode=ParseMode.HTML),
+                timeout=10.0,
+            )
+        except Exception as e:
+            logger.debug(f"Could not finalize working card: {e}")
+        finally:
+            self._working_msg = None
+
     # Max chars to show in a live streaming edit (leave headroom for escape overhead + cursor)
     _STREAM_PREVIEW_LIMIT = 3800
 
@@ -111,59 +166,58 @@ class MessageSender:
 
         Shows a rolling tail window of the last _STREAM_PREVIEW_LIMIT chars during live
         editing so we never exceed Telegram's 4096-char message limit mid-stream.
+
+        Delays creating the streaming card until we have meaningful visible content,
+        so that early tool-use deltas (JSON fragments) don't suppress the Working card.
         """
         self._stream_buf += chunk
         now = _time_mod.monotonic()
         if now - self._stream_last_edit < self._STREAM_DEBOUNCE:
             return
-        self._stream_last_edit = now
 
-        # Build preview: tool events followed by the response so far
-        combined = (self._working_buf + "\n\n" + self._stream_buf) if self._working_buf else self._stream_buf
-        if len(combined) > self._STREAM_PREVIEW_LIMIT:
-            preview = "…" + combined[-self._STREAM_PREVIEW_LIMIT:]
-        else:
-            preview = combined
+        # Don't transition to streaming card until we have visible content (not just
+        # JSON fragments from tool-use deltas).  20 chars catches short replies like
+        # "Yes, I'll do that." that the previous 50-char threshold would suppress.
+        visible = self._stream_buf.strip()
+        if not self._stream_msg and len(visible) < 20:
+            logger.debug(f"stream_delta: waiting for content ({len(visible)} chars)")
+            return
+
+        # Build preview: only the response text (tool events stay in the Working card)
+        preview = self._stream_buf
+        if len(preview) > self._STREAM_PREVIEW_LIMIT:
+            preview = "…" + preview[-self._STREAM_PREVIEW_LIMIT:]
 
         if not self._stream_msg:
             # Resume: record how long the interaction wait took
             if self._interaction_start is not None:
                 self._interaction_wait += _time_mod.monotonic() - self._interaction_start
                 self._interaction_start = None
-            # Transition Working... card into the streaming card (reuse it, don't delete)
-            if self._working_msg:
-                self._stream_msg = self._working_msg
-                self._working_msg = None
+            # Keep the Working card as a permanent log — create a NEW message
+            # for streaming content (don't reuse _working_msg).
             try:
-                safe = html_lib.escape(preview) + " ✍️"
-                if self._stream_msg:
-                    await asyncio.wait_for(
-                        self._stream_msg.edit_text(safe, parse_mode=ParseMode.HTML),
-                        timeout=10.0,
-                    )
-                else:
-                    self._stream_msg = await self.chat.send_message(safe, parse_mode=ParseMode.HTML)
+                safe = html_lib.escape(preview)
+                self._stream_msg = await self.chat.send_message(safe, parse_mode=ParseMode.HTML)
+                self._stream_last_edit = _time_mod.monotonic()
             except Exception as e:
                 logger.debug(f"Stream start failed: {e}")
         else:
             try:
-                safe = html_lib.escape(preview) + " ✍️"
+                safe = html_lib.escape(preview)
                 await asyncio.wait_for(
                     self._stream_msg.edit_text(safe, parse_mode=ParseMode.HTML),
                     timeout=10.0,
                 )
+                self._stream_last_edit = _time_mod.monotonic()
             except Exception as e:
                 logger.debug(f"Stream edit failed: {e}")
 
     async def finalize_stream(self, footer: str = ""):
-        """Replace streaming message with the full final content, split across pages if needed."""
+        """Finalize the Working card and send the full response as new messages."""
         msg = self._stream_msg
         text = self._stream_buf
         self._stream_msg = None
         self._stream_buf = ""
-
-        if not msg:
-            return
 
         # Close any open interaction timer before computing elapsed
         if self._interaction_start is not None:
@@ -172,6 +226,19 @@ class MessageSender:
 
         elapsed = max(0.0, _time_mod.monotonic() - self._start_time - self._interaction_wait)
         elapsed_str = f"\n\n⏱ {elapsed:.1f}s"
+
+        # Finalize the Working card: replace with the tool-event log
+        await self._finalize_working_card()
+
+        # Delete the live streaming message (it was just a preview)
+        if msg:
+            try:
+                await asyncio.wait_for(msg.delete(), timeout=2.0)
+            except Exception:
+                pass
+
+        if not text or not text.strip():
+            return
 
         full = text + elapsed_str
         if footer:
@@ -181,22 +248,16 @@ class MessageSender:
         if not chunks:
             chunks = ["_(empty response)_"]
 
-        # Edit the live streaming message in-place with the first chunk, then send the rest
-        try:
-            await self._edit_message(msg, self._ensure_safe_markdown(chunks[0]))
-        except Exception:
-            await self._safe_send(self._ensure_safe_markdown(chunks[0]))
-
-        for chunk in chunks[1:]:
+        # Send all chunks as new messages below the Working card
+        for chunk in chunks:
             await self._safe_send(self._ensure_safe_markdown(chunk))
 
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.
         
-        Deletes "Working..." message first, then sends all response chunks as new messages.
+        Finalizes the Working card (keeps it as a permanent log), then sends
+        response chunks as new messages below it.
         """
-        await self.delete_working()
-
         # Close any open interaction timer before computing elapsed
         if self._interaction_start is not None:
             self._interaction_wait += _time_mod.monotonic() - self._interaction_start
@@ -204,6 +265,9 @@ class MessageSender:
 
         elapsed = max(0.0, _time_mod.monotonic() - self._start_time - self._interaction_wait)
         elapsed_str = f"\n\n⏱ {elapsed:.1f}s"
+
+        # Finalize the Working card
+        await self._finalize_working_card()
 
         full = text + elapsed_str
         if footer:
@@ -262,11 +326,7 @@ class MessageSender:
             fence_count = len(fences) - 1
             if fence_count % 2 != 0:
                 in_code_block = not in_code_block
-                # Find the language tag of the last opening fence if entering
                 if in_code_block:
-                    # Last fence piece is the content after the last ```
-                    # The fence piece before it ends with the opening ``` line
-                    last_fence_line = fences[-2].split("\n")[-1] if len(fences) >= 2 else ""
                     code_fence_lang = ""  # simplified — don't try to parse lang
 
             # Close unclosed code block at chunk boundary
