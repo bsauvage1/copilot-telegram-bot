@@ -29,15 +29,28 @@ Don't just tell Copilot about the bug—**show it**.
 - **Contextual Awareness:** Images are attached seamlessly to the prompt context.
 
 ### 📊 Developer-First HUD (Heads-Up Display)
-Every response is equipped with a **Real-time Context Footer**, giving you critical metadata at a glance:
+
+**Cockpit** — after project selection, a status card shows the full session state:
 >```
->📂 webproject
->🔀 feature/auth*
->🤖 gpt-5.2 (1.00x)
->⚙️ Mode: Planning
+>✅ Project Loaded: webproject
+>🤖 /model: gpt-4.1 [high]
+>⚙️ /autopilot: interactive
+>📋 /instructions: user · project
+>🧠 /agent: Default · 3 available
+>🔌 /mcp: 2 active · 4 available
+>🧩 /skills: 1 active · 3 available
+>📡 /streamer_mode: disabled
+>📂 Workspace: /home/user/projects/webproject
+>🔀 Branch: feature/auth
+>📊 Stats: 42 files · 8 folders
 >```
 
-Tool executions get **specialized displays** — bash commands show syntax-highlighted output, file edits show diffs, and long outputs are auto-truncated. Sub-agent activity (when Copilot spawns workers) is surfaced in real-time.
+**Response footer** — every model reply is tagged with a compact context line:
+>```
+>🤖 gpt-4.1 [high] · ⚙️ interactive
+>```
+
+**Tool events** — only **top-level tool calls** are displayed; child tool calls (those spawned inside subagents) are silently skipped to match CLI behavior. Subagent lifecycle (`started` / `completed`) is surfaced separately. Each tool type gets specialized formatting — bash commands show a command preview, file tools show the target path, `create` shows a content preview, and `update_todo` renders a checklist with status emojis. Long outputs are auto-truncated.
 
 ### 🛡️ Security & Control (Human-in-the-Loop)
 - **Workspace Confinement:** Server-side enforcement of workspace paths. All file access restricted to `WORKSPACE_ROOT` + optional `GRANTED_PROJECTS` paths.
