@@ -27,20 +27,28 @@ class MessageSender:
 
     def __init__(self, message: Message):
         self.chat: Chat = message.chat
-        self._working_msg: Message | None = None  # The "Working..." message to delete before final response
-        self._working_buf: str = ""               # Accumulated tool-event text (streaming mode)
-        self._stream_msg: Message | None = None   # Live-edited streaming message
-        self._stream_buf: str = ""                # Accumulated streaming text
-        self._stream_last_edit: float = 0.0       # Timestamp of last edit
-        self._stream_creating: bool = False       # Guard: a task is creating _stream_msg
-        self._STREAM_DEBOUNCE = 1.0               # Minimum seconds between edits
-        self._working_last_edit: float = 0.0      # Timestamp of last Working card edit
-        self._working_first_pending: float = 0.0  # When the oldest unsent update arrived
-        self._WORKING_DEBOUNCE = 2.0              # Min seconds between Working card edits
-        self._WORKING_MAX_STALE = 6.0             # Force update after this many seconds
-        self._start_time: float = _time_mod.monotonic()  # For elapsed time in final response
-        self._interaction_wait: float = 0.0               # Seconds spent waiting for user interaction
-        self._interaction_start: float | None = None      # When current interaction started
+        self._working_msg: Message | None = (
+            None  # The "Working..." message to delete before final response
+        )
+        self._working_buf: str = ""  # Accumulated tool-event text (streaming mode)
+        self._stream_msg: Message | None = None  # Live-edited streaming message
+        self._stream_buf: str = ""  # Accumulated streaming text
+        self._stream_last_edit: float = 0.0  # Timestamp of last edit
+        self._stream_creating: bool = False  # Guard: a task is creating _stream_msg
+        self._STREAM_DEBOUNCE = 1.0  # Minimum seconds between edits
+        self._working_last_edit: float = 0.0  # Timestamp of last Working card edit
+        self._working_first_pending: float = (
+            0.0  # When the oldest unsent update arrived
+        )
+        self._WORKING_DEBOUNCE = 2.0  # Min seconds between Working card edits
+        self._WORKING_MAX_STALE = 6.0  # Force update after this many seconds
+        self._start_time: float = (
+            _time_mod.monotonic()
+        )  # For elapsed time in final response
+        self._interaction_wait: float = (
+            0.0  # Seconds spent waiting for user interaction
+        )
+        self._interaction_start: float | None = None  # When current interaction started
 
     async def send_tool_event(self, detail: str):
         """Send a separate permanent message for each tool event."""
@@ -56,7 +64,7 @@ class MessageSender:
 
         # Cap buffer to prevent unbounded growth during long sessions
         if len(self._working_buf) > self._STREAM_PREVIEW_LIMIT:
-            self._working_buf = self._working_buf[-self._STREAM_PREVIEW_LIMIT:]
+            self._working_buf = self._working_buf[-self._STREAM_PREVIEW_LIMIT :]
 
         # If the streaming card is live, the Working card is not the active
         # display — skip editing; finalize_working_card will show the log.
@@ -67,7 +75,7 @@ class MessageSender:
         # Show tail so the card stays within Telegram's limit
         preview = self._working_buf
         if len(preview) > self._STREAM_PREVIEW_LIMIT:
-            preview = "…\n" + preview[-self._STREAM_PREVIEW_LIMIT:]
+            preview = "…\n" + preview[-self._STREAM_PREVIEW_LIMIT :]
 
         safe = html_lib.escape(preview)
         now = _time_mod.monotonic()
@@ -80,7 +88,9 @@ class MessageSender:
                 if not self._working_first_pending:
                     self._working_first_pending = now
                 if (now - self._working_first_pending) < self._WORKING_MAX_STALE:
-                    logger.debug(f"update_working: debounced ({elapsed_since_edit:.1f}s < {self._WORKING_DEBOUNCE}s)")
+                    logger.debug(
+                        f"update_working: debounced ({elapsed_since_edit:.1f}s < {self._WORKING_DEBOUNCE}s)"
+                    )
                     return
             self._working_last_edit = now
             self._working_first_pending = 0.0
@@ -112,7 +122,7 @@ class MessageSender:
             self._stream_msg = None
         self._working_buf = ""
         self._interaction_start = _time_mod.monotonic()
-    
+
     async def create_working(self):
         """Create 'Working...' message once at the start."""
         if not self._working_msg:
@@ -147,7 +157,7 @@ class MessageSender:
         # Telegram re-focusing the Working card instead of the new response below).
         final = self._working_buf
         if len(final) > self._STREAM_PREVIEW_LIMIT:
-            final = "…\n" + final[-self._STREAM_PREVIEW_LIMIT:]
+            final = "…\n" + final[-self._STREAM_PREVIEW_LIMIT :]
         try:
             safe = html_lib.escape(final)
             await asyncio.wait_for(
@@ -192,7 +202,7 @@ class MessageSender:
         # Build preview: only the response text (tool events stay in the Working card)
         preview = self._stream_buf
         if len(preview) > self._STREAM_PREVIEW_LIMIT:
-            preview = "…" + preview[-self._STREAM_PREVIEW_LIMIT:]
+            preview = "…" + preview[-self._STREAM_PREVIEW_LIMIT :]
 
         if not self._stream_msg:
             # Guard: another task is already creating the message — skip.
@@ -202,13 +212,17 @@ class MessageSender:
             self._stream_creating = True
             # Resume: record how long the interaction wait took
             if self._interaction_start is not None:
-                self._interaction_wait += _time_mod.monotonic() - self._interaction_start
+                self._interaction_wait += (
+                    _time_mod.monotonic() - self._interaction_start
+                )
                 self._interaction_start = None
             # Keep the Working card as a permanent log — create a NEW message
             # for streaming content (don't reuse _working_msg).
             try:
                 safe = html_lib.escape(preview)
-                self._stream_msg = await self.chat.send_message(safe, parse_mode=ParseMode.HTML)
+                self._stream_msg = await self.chat.send_message(
+                    safe, parse_mode=ParseMode.HTML
+                )
             except Exception as e:
                 logger.debug(f"Stream start failed: {e}")
             finally:
@@ -238,8 +252,10 @@ class MessageSender:
             self._interaction_wait += _time_mod.monotonic() - self._interaction_start
             self._interaction_start = None
 
-        elapsed = max(0.0, _time_mod.monotonic() - self._start_time - self._interaction_wait)
-        elapsed_str = f"\n\n⏱ {elapsed:.1f}s"
+        elapsed = max(
+            0.0, _time_mod.monotonic() - self._start_time - self._interaction_wait
+        )
+        elapsed_str = f"⏱ {elapsed:.1f}s"
 
         # Finalize the Working card: replace with the tool-event log
         await self._finalize_working_card()
@@ -254,9 +270,10 @@ class MessageSender:
         if not text or not text.strip():
             return
 
-        full = text + elapsed_str
         if footer:
-            full = text + elapsed_str + "\n\n---\n" + footer
+            full = f"{text}\n\n---\n{footer}\n{elapsed_str}"
+        else:
+            full = f"{text}\n\n{elapsed_str}"
 
         chunks = self._split_message(full)
         if not chunks:
@@ -268,7 +285,7 @@ class MessageSender:
 
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.
-        
+
         Finalizes the Working card (keeps it as a permanent log), then sends
         response chunks as new messages below it.
         """
@@ -277,15 +294,18 @@ class MessageSender:
             self._interaction_wait += _time_mod.monotonic() - self._interaction_start
             self._interaction_start = None
 
-        elapsed = max(0.0, _time_mod.monotonic() - self._start_time - self._interaction_wait)
-        elapsed_str = f"\n\n⏱ {elapsed:.1f}s"
+        elapsed = max(
+            0.0, _time_mod.monotonic() - self._start_time - self._interaction_wait
+        )
+        elapsed_str = f"⏱ {elapsed:.1f}s"
 
         # Finalize the Working card
         await self._finalize_working_card()
 
-        full = text + elapsed_str
         if footer:
-            full = text + elapsed_str + "\n\n---\n" + footer
+            full = f"{text}\n\n---\n{footer}\n{elapsed_str}"
+        else:
+            full = f"{text}\n\n{elapsed_str}"
 
         chunks = self._split_message(full)
         if not chunks:
@@ -384,7 +404,9 @@ class MessageSender:
             elif "Can't parse entities" in str(e):
                 try:
                     await asyncio.wait_for(
-                        message.edit_text(html_lib.escape(text), parse_mode=ParseMode.HTML),
+                        message.edit_text(
+                            html_lib.escape(text), parse_mode=ParseMode.HTML
+                        ),
                         timeout=10.0,
                     )
                 except Exception:
@@ -416,7 +438,9 @@ class MessageSender:
             if "Can't parse entities" in str(e):
                 try:
                     return await asyncio.wait_for(
-                        self.chat.send_message(html_lib.escape(text), parse_mode=ParseMode.HTML),
+                        self.chat.send_message(
+                            html_lib.escape(text), parse_mode=ParseMode.HTML
+                        ),
                         timeout=10.0,
                     )
                 except Exception:
@@ -433,6 +457,8 @@ class MessageSender:
         """Send a new message to the chat (fire-and-forget)."""
         await self._safe_send(text, _retry_count)
 
-    async def _send_message_return(self, text: str, _retry_count: int = 0) -> Message | None:
+    async def _send_message_return(
+        self, text: str, _retry_count: int = 0
+    ) -> Message | None:
         """Send a new message and return the Message object."""
         return await self._safe_send(text, _retry_count)
