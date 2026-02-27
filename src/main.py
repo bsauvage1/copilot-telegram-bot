@@ -1,34 +1,63 @@
 import logging
-from pathlib import Path
 from telegram import BotCommand
 from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    MessageHandler, 
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
-    filters
+    filters,
 )
 
 from src.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 from src.core.service import service
 from src.handlers.commands import (
-    start_command, help_command, edit_command, clear_command, 
-    usage_command, plan_command, cwd_command, ls_command, 
+    start_command,
+    help_command,
+    edit_command,
+    clear_command,
+    usage_command,
+    plan_command,
+    cwd_command,
+    ls_command,
     context_command,
-    model_command, share_command, cancel_command,
+    model_command,
+    share_command,
+    cancel_command,
     session_command,
-    diff_command, instructions_command, update_command, allow_all_command,
-    yolo_command, reset_allowed_tools_command,
-    effort_command, sessions_command, infinite_command, ping_command,
-    compact_command, review_command, changelog_command, streamer_mode_command,
-    autopilot_command, mcp_command, agent_command,
-    add_dir_command, list_dirs_command, remove_dir_command,
-    cockpit_command, skills_command, versions_command,
-    build_start_menu
+    diff_command,
+    instructions_command,
+    update_command,
+    allow_all_command,
+    yolo_command,
+    reset_allowed_tools_command,
+    effort_command,
+    sessions_command,
+    infinite_command,
+    ping_command,
+    compact_command,
+    review_command,
+    changelog_command,
+    streamer_mode_command,
+    autopilot_command,
+    mcp_command,
+    agent_command,
+    add_dir_command,
+    list_dirs_command,
+    remove_dir_command,
+    cockpit_command,
+    skills_command,
+    versions_command,
+    build_start_menu,
 )
 from src.handlers.messages import chat_handler
-from src.handlers.callbacks import button_handler, create_project_name, WAITING_PROJECT_NAME, cancel_create_project, reject_command_during_creation
+from src.handlers.callbacks import (
+    button_handler,
+    create_project_name,
+    WAITING_PROJECT_NAME,
+    cancel_create_project,
+    reject_command_during_creation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +66,7 @@ BOT_DESCRIPTION = (
     "Bring the power of GitHub Copilot directly into your chats."
 )
 BOT_SHORT_DESCRIPTION = "GitHub Copilot AI assistant for Telegram"
+
 
 async def setup_bot_commands(application):
     """Set bot commands visible in Telegram UI."""
@@ -47,7 +77,7 @@ async def setup_bot_commands(application):
         BotCommand("edit", "Standard Chat/Coding mode"),
         BotCommand("model", "Switch AI Model"),
         BotCommand("effort", "Set reasoning effort level"),
-        BotCommand("sessions", "Browse & resume past sessions"),
+        BotCommand("resume", "Browse & resume past sessions"),
         BotCommand("clear", "Reset conversation memory"),
         BotCommand("compact", "Compact context (smart reset)"),
         BotCommand("cancel", "Cancel in-progress request"),
@@ -76,13 +106,15 @@ async def setup_bot_commands(application):
         BotCommand("mcp", "View and enable/disable MCP servers"),
         BotCommand("skills", "View and enable/disable skills"),
         BotCommand("agent", "Pick a custom agent (janitor, debug, security…)"),
-        BotCommand("cockpit", "Show session status: model, mode, agent, MCP, workspace"),
+        BotCommand(
+            "cockpit", "Show session status: model, mode, agent, MCP, workspace"
+        ),
     ]
     try:
         # Set bot commands
         await application.bot.set_my_commands(commands)
         logger.info(f"✅ Bot commands set successfully ({len(commands)} commands)")
-        
+
         # Set bot description
         await application.bot.set_my_description(BOT_DESCRIPTION)
         await application.bot.set_my_short_description(BOT_SHORT_DESCRIPTION)
@@ -90,27 +122,35 @@ async def setup_bot_commands(application):
     except Exception as e:
         logger.error(f"❌ Failed to set bot commands/description: {e}", exc_info=True)
 
+
 async def post_init(application):
     # Set bot commands
     await setup_bot_commands(application)
-    
+
     if ALLOWED_USER_ID:
         try:
             selector_text, selector_kb = await build_start_menu()
-            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=selector_text, reply_markup=selector_kb)
-            
+            await application.bot.send_message(
+                chat_id=ALLOWED_USER_ID, text=selector_text, reply_markup=selector_kb
+            )
+
             # Set up session end notification callback
             async def notify_session_end(msg: str):
                 try:
-                    await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg)
+                    await application.bot.send_message(
+                        chat_id=ALLOWED_USER_ID, text=msg
+                    )
                 except Exception as e:
                     logger.error(f"Failed to send session end notification: {e}")
+
             service.session_end_callback = notify_session_end
-        except Exception as e: 
+        except Exception as e:
             logger.error(f"Startup menu failed to send: {e}", exc_info=True)
+
 
 async def post_shutdown(application):
     await service.stop()
+
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
@@ -125,7 +165,7 @@ def main():
         .post_shutdown(post_shutdown)
         .build()
     )
-    
+
     # Conversation Handler for Project Creation
     # Must be registered BEFORE standalone command handlers so it has priority
     # when a conversation is active (WAITING_PROJECT_NAME state).
@@ -141,10 +181,10 @@ def main():
         fallbacks=[
             CallbackQueryHandler(button_handler),  # Handle proj: clicks during creation
         ],
-        per_message=False
+        per_message=False,
     )
     app.add_handler(conv_handler)
-    
+
     # Command Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -167,6 +207,7 @@ def main():
     app.add_handler(CommandHandler("yolo", yolo_command))
     app.add_handler(CommandHandler("reset_allowed_tools", reset_allowed_tools_command))
     app.add_handler(CommandHandler("effort", effort_command))
+    app.add_handler(CommandHandler("resume", sessions_command))
     app.add_handler(CommandHandler("sessions", sessions_command))
     app.add_handler(CommandHandler("infinite", infinite_command))
     app.add_handler(CommandHandler("ping", ping_command))
@@ -183,15 +224,20 @@ def main():
     app.add_handler(CommandHandler("list_dirs", list_dirs_command))
     app.add_handler(CommandHandler("remove_dir", remove_dir_command))
     app.add_handler(CommandHandler("cockpit", cockpit_command))
-    
+
     # Callbacks (non-project, e.g. perm:, input:, model:, reasoning:)
     app.add_handler(CallbackQueryHandler(button_handler))
-    
+
     # Message Handler (Chat)
-    app.add_handler(MessageHandler((filters.TEXT & (~filters.COMMAND)) | filters.ATTACHMENT, chat_handler))
-    
+    app.add_handler(
+        MessageHandler(
+            (filters.TEXT & (~filters.COMMAND)) | filters.ATTACHMENT, chat_handler
+        )
+    )
+
     logger.info("Bot is polling...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()

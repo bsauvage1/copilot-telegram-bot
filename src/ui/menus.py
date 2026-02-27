@@ -8,7 +8,9 @@ def _read_session_cwd(session_id: str) -> Optional[str]:
     """Read the cwd from ~/.copilot/session-state/<id>/workspace.yaml without PyYAML."""
     if not session_id:
         return None
-    workspace = Path.home() / ".copilot" / "session-state" / session_id / "workspace.yaml"
+    workspace = (
+        Path.home() / ".copilot" / "session-state" / session_id / "workspace.yaml"
+    )
     try:
         for line in workspace.read_text().splitlines():
             stripped = line.strip()
@@ -19,7 +21,9 @@ def _read_session_cwd(session_id: str) -> Optional[str]:
     return None
 
 
-def _build_button_grid(items: List[InlineKeyboardButton], columns: int = 2) -> List[List[InlineKeyboardButton]]:
+def _build_button_grid(
+    items: List[InlineKeyboardButton], columns: int = 2
+) -> List[List[InlineKeyboardButton]]:
     """Build a grid of buttons with the given number of columns."""
     rows = []
     row = []
@@ -40,7 +44,9 @@ def get_project_keyboard(root_path: Path):
     projects = []  # List of (name, callback_data) tuples
 
     # Add workspace subdirectories
-    subdirs = sorted([d for d in root_path.iterdir() if d.is_dir() and not d.name.startswith('.')])
+    subdirs = sorted(
+        [d for d in root_path.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    )
     for d in subdirs:
         projects.append((d.name, f"proj:{d.name}"))
 
@@ -51,10 +57,15 @@ def get_project_keyboard(root_path: Path):
 
     projects.sort(key=lambda x: x[0].lower())
 
-    btns = [InlineKeyboardButton(f"📂 {name}", callback_data=cb) for name, cb in projects]
+    btns = [
+        InlineKeyboardButton(f"📂 {name}", callback_data=cb) for name, cb in projects
+    ]
     buttons = _build_button_grid(btns)
-    buttons.append([InlineKeyboardButton("➕ Create New Project", callback_data="proj_new")])
+    buttons.append(
+        [InlineKeyboardButton("➕ Create New Project", callback_data="proj_new")]
+    )
     return InlineKeyboardMarkup(buttons)
+
 
 _NOISE_PREFIXES = (
     "You are in GENERAL Mode",
@@ -63,6 +74,7 @@ _NOISE_PREFIXES = (
     "Please review the following git diff",
     "Generate a concise",
 )
+
 
 def _clean_summary(raw: str | None) -> str:
     """Return a display-friendly session summary, stripping system prompt noise."""
@@ -88,12 +100,12 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
     icon that appears both in the header legend and as a prefix on each session button.
     """
     sorted_sessions = sorted(
-        sessions, key=lambda s: getattr(s, 'modifiedTime', '') or '', reverse=True
+        sessions, key=lambda s: getattr(s, "modifiedTime", "") or "", reverse=True
     )
 
     def _make_btn(s, session_id, icon=""):
-        summary = _clean_summary(getattr(s, 'summary', None))
-        start_time = getattr(s, 'startTime', None) or ""
+        summary = _clean_summary(getattr(s, "summary", None))
+        start_time = getattr(s, "startTime", None) or ""
         date_str = start_time[:10]
         time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id
@@ -107,19 +119,26 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
         for s in sorted_sessions:
             if len(btns) >= 10:
                 break
-            session_id = getattr(s, 'sessionId', None) or str(s)
+            session_id = getattr(s, "sessionId", None) or str(s)
             if _read_session_cwd(session_id) != cwd_filter:
                 continue
             btns.append(_make_btn(s, session_id))
         if not btns:
-            btns.append(InlineKeyboardButton("No sessions for this project", callback_data="session:none"))
-        return "Select a session to resume:", InlineKeyboardMarkup([[btn] for btn in btns])
+            btns.append(
+                InlineKeyboardButton(
+                    "No sessions for this project", callback_data="session:none"
+                )
+            )
+        return "Select a session to resume:", InlineKeyboardMarkup(
+            [[btn] for btn in btns]
+        )
     else:
         # All-projects view: assign icon per project, list legend in header
         from collections import defaultdict, OrderedDict
+
         groups: dict = OrderedDict()
         for s in sorted_sessions:
-            session_id = getattr(s, 'sessionId', None) or str(s)
+            session_id = getattr(s, "sessionId", None) or str(s)
             cwd = _read_session_cwd(session_id)
             project = Path(cwd).name if cwd else "Unknown"
             if project not in groups:
@@ -127,7 +146,9 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
             groups[project].append((s, session_id))
 
         # Assign icons
-        icon_map = {p: _PROJECT_ICONS[i % len(_PROJECT_ICONS)] for i, p in enumerate(groups)}
+        icon_map = {
+            p: _PROJECT_ICONS[i % len(_PROJECT_ICONS)] for i, p in enumerate(groups)
+        }
 
         # Build header legend
         legend = "\n".join(f"{icon_map[p]} {p}" for p in groups)
@@ -141,7 +162,13 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
                 rows.append([_make_btn(s, session_id, icon=icon)])
 
         if not rows:
-            rows.append([InlineKeyboardButton("No sessions found", callback_data="session:none")])
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        "No sessions found", callback_data="session:none"
+                    )
+                ]
+            )
         return header, InlineKeyboardMarkup(rows)
 
 
@@ -150,9 +177,12 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     for m in models_data:
         m_id = m.get("id", "unknown")
         mult = m.get("multiplier", "1x")
-        btns.append(InlineKeyboardButton(f"({mult}) {m_id}", callback_data=f"model:{m_id}"))
+        btns.append(
+            InlineKeyboardButton(f"({mult}) {m_id}", callback_data=f"model:{m_id}")
+        )
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
+
 
 def _command_reference() -> str:
     """Return the full command reference block."""
@@ -162,39 +192,39 @@ def _command_reference() -> str:
         "Core Workflow\n"
         "🤖 /model - Switch AI model\n"
         "💡 /effort - Set reasoning effort level\n"
-        "⚙️ /autopilot - Mode picker: interactive / plan / autopilot\n"
+        "⚙️ /autopilot - interactive / plan / autopilot\n"
         "📝 /plan - Switch to Plan Mode\n"
-        "✏️ /edit - Switch to Interactive (Edit/Chat) Mode\n"
-        "📋 /instructions - View Copilot instructions (user & project)\n"
-        "🧠 /agent - Pick a custom agent (janitor, debug, security…)\n"
-        "🔌 /mcp - View and enable/disable MCP servers\n"
-        "🧩 /skills - View and enable/disable skills\n"
-        "📡 /streamer_mode - Toggle live token streaming\n\n"
+        "✏️ /edit - Switch to Interactive (Chat) Mode\n"
+        "📋 /instructions - View Copilot instructions\n"
+        "🧠 /agent - Pick a custom agent\n"
+        "🔌 /mcp - View and toggle MCP servers\n"
+        "🧩 /skills - View and toggle skills\n"
+        "📡 /streamer_mode - Toggle live streaming\n\n"
         "Session Control\n"
-        "📂 /sessions - Browse & resume past sessions\n"
+        "📂 /resume - Browse & resume past sessions\n"
         "🗑️ /clear - Reset conversation memory\n"
         "📦 /compact - Compact context (smart reset)\n"
         "⛔ /cancel - Cancel in-progress request\n"
         "📤 /share - Export session to Markdown\n"
         "📊 /usage - Display session usage metrics\n"
         "🧮 /context - Display model context info\n"
-        "ℹ️ /session - Show session info and workspace summary\n"
-        "♾️ /infinite - Toggle infinite sessions (auto-compaction)\n"
-        "🔓 /allow_all - Toggle allow-all-tools mode (alias: /yolo)\n"
-        "🔒 /reset_allowed_tools - Disable allow-all and restore prompts\n\n"
+        "ℹ️ /session - Show session info\n"
+        "♾️ /infinite - Toggle auto-compaction\n"
+        "🔓 /allow_all - Toggle allow-all-tools (/yolo)\n"
+        "🔒 /reset_allowed_tools - Disable allow-all\n\n"
         "Code Tools\n"
-        "🔍 /diff - Show git diff (paged, monospace code block)\n"
+        "🔍 /diff - Show git diff (paged, monospace)\n"
         "🧐 /review - AI code review of current diff\n"
-        "📜 /changelog - Generate changelog from git log\n\n"
+        "📜 /changelog - Generate changelog from git\n\n"
         "Navigation\n"
         "📁 /ls - Project file tree\n"
         "📍 /cwd - Show current directory\n"
-        "➕ /add_dir - Add extra directory to session scope\n"
+        "➕ /add_dir - Add extra directory to scope\n"
         "📋 /list_dirs - List project + extra directories\n"
         "➖ /remove_dir - Remove an extra directory\n\n"
         "Utilities\n"
-        "🎛️ /cockpit - Show session status (model, mode, agent, MCP…)\n"
-        "🧭 /versions - Show local/runtime/latest version intelligence\n"
+        "🎛️ /cockpit - Show model, mode, agent, MCP…\n"
+        "🧭 /versions - Show version intelligence\n"
         "🏓 /ping - Check CLI connection status\n"
         "⬆️ /update - Update Copilot CLI\n"
     )
@@ -226,18 +256,28 @@ def get_cockpit_content(
     model_line = f"🤖 /model: {model}" + (f" [{effort}]" if effort else "") + "\n"
     mode_map = {"Chat": "interactive", "Plan": "plan", "Autopilot": "autopilot"}
     mode_value = mode_map.get(mode, mode.lower())
-    mode_suffix = f" ({'full' if allow_all_tools else 'limited'} permissions)" if mode == "Autopilot" else ""
+    mode_suffix = (
+        f" ({'full' if allow_all_tools else 'limited'} permissions)"
+        if mode == "Autopilot"
+        else ""
+    )
     mode_line = f"⚙️ /autopilot: {mode_value}{mode_suffix}\n"
     if mcp_total:
         mcp_line = f"🔌 /mcp: {mcp_enabled} active · {mcp_total} available\n"
     else:
         mcp_line = "🔌 /mcp: none\n"
     if skills_total:
-        skills_line = f"🧩 /skills: {skills_enabled} active · {skills_total} available\n"
+        skills_line = (
+            f"🧩 /skills: {skills_enabled} active · {skills_total} available\n"
+        )
     else:
         skills_line = "🧩 /skills: none\n"
-    instr_parts = (["user"] if instructions_user else []) + (["project"] if instructions_project else [])
-    instructions_line = f"📋 /instructions: {' · '.join(instr_parts) if instr_parts else 'none'}\n"
+    instr_parts = (["user"] if instructions_user else []) + (
+        ["project"] if instructions_project else []
+    )
+    instructions_line = (
+        f"📋 /instructions: {' · '.join(instr_parts) if instr_parts else 'none'}\n"
+    )
     agent_label = agent_name if agent_name else "Default"
     agent_suffix = f" · {agent_count} available" if agent_count else ""
     agent_line = f"🧠 /agent: {agent_label}{agent_suffix}\n"
@@ -267,18 +307,20 @@ def get_cockpit_content(
 def get_help_content(project_selected: bool = False) -> str:
     """Help with status indicator and full command list."""
     status_dot = "🟢" if project_selected else "🔴"
-    return (
-        f"{status_dot} Copilot CLI-Telegram\n\n"
-        f"{_command_reference()}"
-        + ("" if project_selected else "\n⚠️ Action Required: Select or create a project to begin.")
+    return f"{status_dot} Copilot CLI-Telegram\n\n{_command_reference()}" + (
+        ""
+        if project_selected
+        else "\n⚠️ Action Required: Select or create a project to begin."
     )
 
 
-def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effort: str = None):
+def get_reasoning_keyboard(
+    model_id: str, supported_efforts: list, default_effort: str = None
+):
     """Build inline keyboard for reasoning effort selection."""
     effort_labels = {
         "low": "Low",
-        "medium": "Medium", 
+        "medium": "Medium",
         "high": "High",
         "xhigh": "XHigh",
     }
@@ -287,8 +329,16 @@ def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effor
         label = effort_labels.get(effort, effort.capitalize())
         if default_effort and effort == default_effort:
             label += " (default)"
-        btns.append(InlineKeyboardButton(label, callback_data=f"reasoning:{model_id}:{effort}"))
+        btns.append(
+            InlineKeyboardButton(label, callback_data=f"reasoning:{model_id}:{effort}")
+        )
     buttons = _build_button_grid(btns)
     # Add skip button to use default
-    buttons.append([InlineKeyboardButton("Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "Skip (use default)", callback_data=f"reasoning:{model_id}:default"
+            )
+        ]
+    )
     return InlineKeyboardMarkup(buttons)

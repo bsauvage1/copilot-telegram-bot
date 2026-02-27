@@ -148,7 +148,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/context` | Display model context and token usage info. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/session` | Show session info and workspace summary. |
-| `/sessions` | Browse past Copilot sessions (filtered by project) and resume one. |
+| `/resume` | Browse past Copilot sessions (filtered by project) and resume one. |
 | `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
 | `/clear` | Reset conversation memory. |
@@ -227,7 +227,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 
 - **[src/handlers/](src/handlers/)** — Telegram Handlers:
-  - **[commands.py](src/handlers/commands.py)**: All 24 bot commands (`/start`, `/help`, `/plan`, `/model`, `/diff`, `/review`, `/sessions`, etc.).
+  - **[commands.py](src/handlers/commands.py)**: All 24 bot commands (`/start`, `/help`, `/plan`, `/model`, `/diff`, `/review`, `/resume`, etc.).
   - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements interaction callback — when agent needs permission, creates `asyncio.Future` + inline keyboard.
   - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 
