@@ -223,7 +223,7 @@ def _command_reference() -> str:
         "📋 /list_dirs - List project + extra directories\n"
         "➖ /remove_dir - Remove an extra directory\n\n"
         "Utilities\n"
-        "🎛️ /cockpit - Show model, mode, agent, MCP…\n"
+        "🎛️ /cockpit - Show model, mode, agent…\n"
         "🧭 /versions - Show version intelligence\n"
         "🏓 /ping - Check CLI connection status\n"
         "⬆️ /update - Update Copilot CLI\n"
