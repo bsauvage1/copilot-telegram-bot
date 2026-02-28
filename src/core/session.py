@@ -131,13 +131,13 @@ class SessionMixin:
 
         if self._is_running:
             try:
-                errors = await asyncio.wait_for(self.client.stop(), timeout=10)
-                if errors:
-                    for err in errors:
-                        logger.warning(f"⚠️ Client stop error: {err.message}")
+                await asyncio.wait_for(self.client.stop(), timeout=10)
             except asyncio.TimeoutError:
                 logger.warning("⏱️ Graceful stop timed out, forcing stop...")
                 await self.client.force_stop()
+            except ExceptionGroup as eg:
+                for err in eg.exceptions:
+                    logger.warning(f"⚠️ Client stop error: {err}")
             except Exception as e:
                 logger.error(f"Error during client stop: {e}")
                 try:
@@ -236,6 +236,7 @@ class SessionMixin:
         resume_config = {
             "model": model,
             "streaming": self.streaming_enabled,
+            "on_permission_request": self._on_permission_request,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,
@@ -341,6 +342,7 @@ class SessionMixin:
         session_config = {
             "model": model,
             "streaming": self.streaming_enabled,
+            "on_permission_request": self._on_permission_request,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,
@@ -453,10 +455,18 @@ class SessionMixin:
         except RuntimeError:
             logger.debug("No running event loop — skipping session context extraction")
 
+    async def _on_permission_request(self, request, invocation=None):
+        """SDK-level permission handler (required since v0.1.29).
+
+        Always approves — fine-grained tool-level decisions are
+        handled by the on_pre_tool_use hook in _permission_bridge.
+        """
+        return {"kind": "approved"}
+
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
         tool_name = input_data.get('toolName', 'unknown')
-        tool_args = input_data.get('arguments', {})
+        tool_args = input_data.get('toolArgs', {})
 
         # Auto-approve when allow_all_tools is enabled
         if self.allow_all_tools:
