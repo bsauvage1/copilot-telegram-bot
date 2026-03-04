@@ -4,7 +4,7 @@
 
 Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![SDK](https://img.shields.io/badge/Copilot-SDK-black)
 ![Manager](https://img.shields.io/badge/uv-managed-purple)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
@@ -37,7 +37,7 @@ Don't just tell Copilot about the bug—**show it**.
 >🤖 /model: gpt-4.1 [high]
 >⚙️ /autopilot: interactive
 >📋 /instructions: user · project
->🧠 /agent: Default · 3 available
+>🧠 /agent: Default · 5 built-in · 3 custom
 >🔌 /mcp: 2 active · 4 available
 >🧩 /skills: 1 active · 3 available
 >📡 /streamer_mode: disabled
@@ -46,9 +46,10 @@ Don't just tell Copilot about the bug—**show it**.
 >📊 Stats: 42 files · 8 folders
 >```
 
-**Response footer** — every model reply is tagged with a compact context line:
+**Response footer** — every model reply is tagged with a compact context line and elapsed time:
 >```
 >🤖 gpt-4.1 [high] · ⚙️ interactive
+>⏱ 4.2s
 >```
 
 **Tool events** — only **top-level tool calls** are displayed; child tool calls (those spawned inside subagents) are silently skipped to match CLI behavior. Subagent lifecycle (`started` / `completed`) is surfaced separately. Each tool type gets specialized formatting — bash commands show a command preview, file tools show the target path, `create` shows a content preview, and `update_todo` renders a checklist with status emojis. Long outputs are auto-truncated.
@@ -62,7 +63,7 @@ Don't just tell Copilot about the bug—**show it**.
 
 ## 🛠️ Prerequisites
 
-1.  **Python 3.10+**
+1.  **Python 3.11+**
 2.  **[uv](https://github.com/astral-sh/uv)** (Fast Python package manager)
 3.  **GitHub Copilot CLI** (authenticated)
     ```bash
@@ -141,7 +142,7 @@ The bot launches into a **startup splash** showing:
 
 After selecting a project, a **cockpit message** appears with:
 - Current model + billing multiplier
-- Active mode (Plan/Edit)
+- Active mode (Interactive/Plan/Autopilot)
 - Branch name + dirty status
 - File/folder count in workspace
 
