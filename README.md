@@ -13,9 +13,10 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 
 ## ✨ Key Features
 
-### 🤖 Dual Operation Modes
+### 🤖 Three Operation Modes
 - **📝 Plan Mode (Architecture):** Uses pre-defined, high-level prompts to help you brainstorm architecture, plan features, and outline project structures before writing a single line of code.
 - **💬 Edit Mode (Development):** The standard Copilot experience. Write code, debug errors, run tests, and execute terminal commands directly from chat.
+- **🚀 Autopilot Mode:** Full autonomous execution — Copilot runs tools and makes decisions without pausing for approval. Ideal for longer tasks where you want hands-free operation.
 
 ### 📱 Mobile-First UX
 Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequency actions:

@@ -516,14 +516,38 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         disabled_skills = set(get_disabled_skills())
         skills_enabled = sum(1 for s in all_skills if s["name"] not in disabled_skills)
         skills_total = len(all_skills)
-        # Get selected agent display name and total count
-        from src.core.agents import get_available_agents
+        # Get selected agent display name and user agent count via SDK RPC
+        from src.core.agents import get_available_agents, get_builtin_agent_keys
 
-        agents = get_available_agents()
         agent_name = ""
-        if self.selected_agent:
+        agent_user_count = 0
+        agent_builtin_count = 0
+        if self.session:
+            try:
+                result = await self.session.rpc.agent.list()
+                agent_user_count = len(result.agents)
+                if self.selected_agent:
+                    meta = next(
+                        (a for a in result.agents if a.name == self.selected_agent),
+                        None,
+                    )
+                    agent_name = (
+                        meta.display_name or meta.name if meta else self.selected_agent
+                    )
+            except Exception:
+                pass
+        if self.client:
+            builtin_keys = await get_builtin_agent_keys(self.client)
+            user_agent_keys = {a["key"] for a in get_available_agents()}
+            agent_builtin_count = sum(
+                1 for k in builtin_keys if k not in user_agent_keys
+            )
+        if not agent_name and self.selected_agent:
+            # Fallback to filesystem if session not available
+            agents = get_available_agents()
             meta = next((a for a in agents if a["key"] == self.selected_agent), None)
             agent_name = meta["name"] if meta else self.selected_agent
+            agent_user_count = agent_user_count or len(agents)
         return get_cockpit_content(
             project_name=self.project_name or Path(self.session_info.cwd).name,
             model=model,
@@ -536,7 +560,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             mcp_enabled=mcp_enabled,
             mcp_total=mcp_total,
             agent_name=agent_name,
-            agent_count=len(agents),
+            agent_builtin_count=agent_builtin_count,
+            agent_user_count=agent_user_count,
             streaming=self.streaming_enabled,
             allow_all_tools=self.allow_all_tools,
             extra_dirs=self.extra_dirs or None,

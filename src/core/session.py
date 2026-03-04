@@ -16,7 +16,12 @@ from src.config import (
 from src.core.context import ctx
 from src.core.mcp_config import get_enabled_servers
 from src.core.skills_config import get_skill_dirs_for_session, get_disabled_skills
-from src.core.agents import get_available_agents, parse_agent_prompt, AGENTS_DIR
+from src.core.agents import (
+    get_available_agents,
+    get_builtin_agent_keys,
+    parse_agent_prompt,
+    AGENTS_DIR,
+)
 from src.core.usage import SessionUsageTracker, SessionInfo
 from src.core.instructions import (
     USER_INSTRUCTIONS_PATH,
@@ -57,34 +62,56 @@ class _PermissionRequest:
 
 
 def _apply_agent_config(svc, cfg: dict) -> None:
-    """Inject config_dir and selected agent into a session config dict.
+    """Inject config_dir and custom_agents into a session config dict.
 
-    config_dir is always set so the CLI discovers ~/.copilot/agents/ for
-    auto-inference even when no explicit agent is selected.
+    Always registers all installed agents so the CLI binary includes them in
+    the task tool's agent_type enum (required since SDK v0.1.28 — configDir
+    alone no longer triggers auto-discovery into the tool schema).
+
+    When the user has explicitly selected an agent it is registered with
+    infer=False so the runtime uses it without override; all other agents are
+    registered with infer=True so the model can invoke them on demand.
     """
     cfg["config_dir"] = str(AGENTS_DIR.parent)  # ~/.copilot
+
+    available = get_available_agents()
+    if not available:
+        return
+
     if svc.selected_agent:
         prompt = parse_agent_prompt(svc.selected_agent)
-        if prompt:
-            agents = get_available_agents()
-            meta = next((a for a in agents if a["key"] == svc.selected_agent), {})
-            cfg["custom_agents"] = [
-                {
-                    "name": svc.selected_agent,
-                    "display_name": meta.get("name", svc.selected_agent),
-                    "description": meta.get("description", ""),
-                    "prompt": prompt,
-                    # infer=False: user explicitly picked this agent, so the main
-                    # agent should not override the selection via auto-inference
-                    "infer": False,
-                }
-            ]
-            logger.info(f"Custom agent injected: {svc.selected_agent}")
-        else:
+        if not prompt:
             logger.warning(
-                f"Agent '{svc.selected_agent}' file not found — falling back to default agent"
+                f"Agent '{svc.selected_agent}' file not found"
+                " — falling back to default agent"
             )
             svc.selected_agent = None
+
+    wire_agents = []
+    for a in available:
+        prompt = parse_agent_prompt(a["key"])
+        if not prompt:
+            continue
+        is_selected = a["key"] == svc.selected_agent
+        wire_agents.append(
+            {
+                "name": a["key"],
+                "display_name": a.get("name", a["key"]),
+                "description": a.get("description", ""),
+                "prompt": prompt,
+                # infer=False for the explicitly selected agent so the runtime
+                # activates it directly; infer=True for all others so they are
+                # available in the task tool schema but not auto-activated.
+                "infer": not is_selected,
+            }
+        )
+
+    if wire_agents:
+        cfg["custom_agents"] = wire_agents
+        selected_info = svc.selected_agent or "none selected"
+        logger.info(
+            f"Custom agents registered: {len(wire_agents)} (selected: {selected_info})"
+        )
 
 
 def _build_agents_context() -> str:
@@ -99,11 +126,6 @@ def _build_agents_context() -> str:
     for a in agents:
         desc = f" — {a['description']}" if a["description"] else ""
         lines.append(f"- {a['key']}: {a['name']}{desc}")
-    lines.append(
-        "When the user asks to use one of these agents, invoke the task tool "
-        "with agent_type set to the agent key even if it is not in the built-in "
-        "enum — the runtime will resolve it."
-    )
     return "\n".join(lines)
 
 
@@ -149,6 +171,12 @@ class SessionMixin:
                 await self.client.start()
                 self._is_running = True
                 logger.info("Copilot Client Started.")
+                # Prime the built-in agent key cache once so concurrent cockpit
+                # requests never race to populate it.
+                try:
+                    await get_builtin_agent_keys(self.client)
+                except Exception as e:
+                    logger.warning(f"Could not prime builtin agent cache: {e}")
             except Exception as e:
                 logger.error(f"Failed to start client: {e}")
                 raise e

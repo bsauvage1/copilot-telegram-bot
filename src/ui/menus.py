@@ -22,11 +22,13 @@ def _read_session_cwd(session_id: str) -> Optional[str]:
     return None
 
 
-def _write_session_summary(session_id: str, summary: str) -> None:
+def write_session_summary(session_id: str, summary: str) -> None:
     """Write a clean summary to workspace.yaml, replacing any existing one.
 
-    Handles both single-line ``summary: text`` and block scalar
-    ``summary: |-\\n  ...`` formats without requiring PyYAML.
+    Handles both single-line ``summary: text`` and all block scalar
+    variants (|, |-, |+, >, >-, >+) without requiring PyYAML.
+    Appends the key when it is absent (e.g. brand-new sessions).
+    Quotes the value to prevent YAML injection from user input.
     """
     if not session_id or not summary:
         return
@@ -36,13 +38,18 @@ def _write_session_summary(session_id: str, summary: str) -> None:
     try:
         text = workspace.read_text()
         clean = summary.replace("\n", " ")[:80].strip()
-        # Replace single-line OR block-scalar summary field
+        escaped = clean.replace('"', '\\"')
+        replacement = f'summary: "{escaped}"\n'
+        # Replace any existing summary field (single-line or any block scalar)
         new_text = re.sub(
-            r"^summary:[ \t]*\|-\n(?:[ \t]+[^\n]*\n)*|^summary:[ \t]*[^\n]*\n?",
-            f"summary: {clean}\n",
+            r"^summary:[ \t]*(?:[|>][+-]?\n(?:[ \t]+[^\n]*\n)*|[^\n]*\n?)",
+            replacement,
             text,
             flags=re.MULTILINE,
         )
+        # Key was absent — append it
+        if "summary:" not in new_text:
+            new_text = new_text.rstrip("\n") + f"\n{replacement}"
         workspace.write_text(new_text)
     except Exception:
         pass
@@ -183,7 +190,7 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
         )
     else:
         # All-projects view: assign icon per project, list legend in header
-        from collections import defaultdict, OrderedDict
+        from collections import OrderedDict
 
         groups: dict = OrderedDict()
         for s in sorted_sessions:
@@ -291,7 +298,8 @@ def get_cockpit_content(
     mcp_enabled: int = 0,
     mcp_total: int = 0,
     agent_name: str = "",
-    agent_count: int = 0,
+    agent_builtin_count: int = 0,
+    agent_user_count: int = 0,
     streaming: bool = False,
     allow_all_tools: bool = False,
     extra_dirs: Optional[List[str]] = None,
@@ -328,7 +336,11 @@ def get_cockpit_content(
         f"📋 /instructions: {' · '.join(instr_parts) if instr_parts else 'none'}\n"
     )
     agent_label = agent_name if agent_name else "Default"
-    agent_suffix = f" · {agent_count} available" if agent_count else ""
+    agent_suffix = (
+        f" · {agent_builtin_count} built-in · {agent_user_count} custom"
+        if agent_builtin_count or agent_user_count
+        else ""
+    )
     agent_line = f"🧠 /agent: {agent_label}{agent_suffix}\n"
     streaming_line = f"📡 /streamer_mode: {'enabled' if streaming else 'disabled'}\n"
     if extra_dirs:

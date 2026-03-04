@@ -2,17 +2,14 @@
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
-
-if TYPE_CHECKING:
-    from copilot.client import CopilotClient
+from typing import Any, Optional
 
 AGENTS_DIR = Path.home() / ".copilot" / "agents"
 
 _cached_builtin_agent_keys: list[str] | None = None
 
 
-async def get_builtin_agent_keys(client: "Any") -> list[str]:
+async def get_builtin_agent_keys(client: Any) -> list[str]:
     """Return built-in agent type keys from the CLI tool spec.
 
     Calls tools.list RPC and extracts the agent_type enum from the task tool's
@@ -43,26 +40,29 @@ async def get_builtin_agent_keys(client: "Any") -> list[str]:
         pass
     return []
 
+
 # Ordered: first match wins. Checked against lowercased key+name+description.
 _ICON_RULES = [
-    (["janitor", "cleanup", "clean up", "tech debt", "simplif"],                  "🧹"),
-    (["debug", "bug", "fix a bug", "diagnos"],                                    "🐛"),
-    (["tdd", "test-first", "failing test"],                                       "🧪"),
-    (["plan", "planning", "blueprint"],                                           "📋"),
-    (["refactor", "improve code quality"],                                        "♻️"),
-    (["\\bci\\b", "\\bcd\\b", "actions", "pipeline", "workflow", "deploy"],       "⚙️"),
-    (["security", "owasp", "vulnerability", "exploit", "threat"],                 "🛡️"),
-    (["principal", "senior", "engineering excellence", "leadership"],             "🏛️"),
-    (["review", "audit", "inspect"],                                              "👁️"),
-    (["document", "readme", "technical writ"],                                    "📝"),
-    (["performance", "optimis", "optimiz", "latency"],                            "⚡"),
-    (["database", "\\bsql\\b", "migration", "schema"],                            "🗄️"),
-    (["infra", "terraform", "kubernetes", "\\bcloud\\b", "\\biac\\b"],            "☁️"),
+    (["janitor", "cleanup", "clean up", "tech debt", "simplif"], "🧹"),
+    (["debug", "bug", "fix a bug", "diagnos"], "🐛"),
+    (["tdd", "test-first", "failing test"], "🧪"),
+    (["plan", "planning", "blueprint"], "📋"),
+    (["refactor", "improve code quality"], "♻️"),
+    (["\\bci\\b", "\\bcd\\b", "actions", "pipeline", "workflow", "deploy"], "⚙️"),
+    (["security", "owasp", "vulnerability", "exploit", "threat"], "🛡️"),
+    (["principal", "senior", "engineering excellence", "leadership"], "🏛️"),
+    (["review", "audit", "inspect"], "👁️"),
+    (["document", "readme", "technical writ"], "📝"),
+    (["performance", "optimis", "optimiz", "latency"], "⚡"),
+    (["database", "\\bsql\\b", "migration", "schema"], "🗄️"),
+    (["infra", "terraform", "kubernetes", "\\bcloud\\b", "\\biac\\b"], "☁️"),
 ]
 
 
 def _extract_field(content: str, field: str) -> Optional[str]:
-    match = re.search(rf"^{re.escape(field)}:\s*['\"]?([^\n'\"]*?)['\"]?\s*$", content, re.MULTILINE)
+    match = re.search(
+        rf"^{re.escape(field)}:\s*['\"]?([^\n'\"]*?)['\"]?\s*$", content, re.MULTILINE
+    )
     return match.group(1).strip() if match else None
 
 
@@ -94,13 +94,15 @@ def get_available_agents() -> list[dict]:
         name = _extract_field(content, "name") or key
         description = _extract_field(content, "description") or ""
         model = _extract_field(content, "model") or ""
-        agents.append({
-            "key": key,
-            "name": name,
-            "description": description,
-            "icon": agent_icon(key, name, description),
-            "model": model,
-        })
+        agents.append(
+            {
+                "key": key,
+                "name": name,
+                "description": description,
+                "icon": agent_icon(key, name, description),
+                "model": model,
+            }
+        )
     return agents
 
 

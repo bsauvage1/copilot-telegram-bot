@@ -1,7 +1,7 @@
 import logging
 import re
 from pathlib import Path
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -242,7 +242,8 @@ async def _handle_reasoning_callback(query, context):
     await service.change_model(model, reasoning_effort=reasoning_effort)
     effort_display = effort.capitalize() if effort != "default" else "Default"
     await query.edit_message_text(
-        f"✅ Model: {model} | Effort: {effort_display}",
+        f"✅ Model: {model} | Effort: {effort_display}\n"
+        "⚠️ History cleared (new session required for reasoning effort change).",
     )
 
 
@@ -410,7 +411,6 @@ async def _handle_mode_callback(query, context):
     context.user_data["plan_mode"] = active_mode == "plan"
     service.save_prefs()
 
-    label = _MODE_LABELS.get(active_mode, active_mode)
     buttons = [
         [
             InlineKeyboardButton(
@@ -440,7 +440,6 @@ async def _handle_autopilot_confirm_callback(query, context):
     if choice == "cancel":
         # Restore the normal mode picker
         current = service.agent_mode
-        label = _MODE_LABELS.get(current, current)
         buttons = [
             [
                 InlineKeyboardButton(
@@ -845,7 +844,7 @@ async def _handle_changelog_callback(query, component: str):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update):
         return
-    logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
+    logger.info("🎯 button_handler ENTRY - CallbackQuery received")
 
     query = update.callback_query
     logger.info(f"🎯 Query data: {query.data}")

@@ -11,7 +11,7 @@ from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
 from src.core.context import streaming_mode
 from src.ui.streamer import MessageSender
-from src.ui.menus import _write_session_summary
+from src.ui.menus import write_session_summary
 
 from src.handlers.utils import security_check, check_project_selected
 
@@ -307,7 +307,7 @@ async def chat_handler(
         # Persist clean summary so /sessions shows meaningful titles
         session_id = getattr(getattr(service, "session_info", None), "session_id", None)
         if session_id and original_user_text:
-            _write_session_summary(session_id, original_user_text)
+            write_session_summary(session_id, original_user_text)
 
     except asyncio.CancelledError:
         # /cancel was invoked — just dismiss the working message silently

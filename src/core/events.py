@@ -11,6 +11,19 @@ from src.core.context import streaming_mode as streaming_mode_var
 
 logger = logging.getLogger(__name__)
 
+_VISIBLE_TOOLS: frozenset[str] = frozenset(
+    {
+        "bash",
+        "create",
+        "edit",
+        "task",
+        "ask_user",
+        "report_intent",
+        "update_todo",
+        "show_file",
+    }
+)
+
 
 class EventHandlerMixin:
     """Mixin providing SDK event routing and per-type handler methods.
@@ -55,7 +68,7 @@ class EventHandlerMixin:
 
     def _on_assistant_message(self, event):
         """Capture the complete assistant message (streaming is disabled)."""
-        content = getattr(event.data, 'content', None)
+        content = getattr(event.data, "content", None)
         if content and self.current_callback:
             try:
                 self._dispatch_async(self.current_callback, content)
@@ -64,10 +77,14 @@ class EventHandlerMixin:
 
     def _on_tool_start(self, event):
         try:
-            tool_name = event.data.tool_name or getattr(event.data, 'mcp_tool_name', None) or "unknown"
+            tool_name = (
+                event.data.tool_name
+                or getattr(event.data, "mcp_tool_name", None)
+                or "unknown"
+            )
             args = event.data.arguments
-            tool_call_id = getattr(event.data, 'tool_call_id', None)
-            parent_tool_call_id = getattr(event.data, 'parent_tool_call_id', None)
+            tool_call_id = getattr(event.data, "tool_call_id", None)
+            parent_tool_call_id = getattr(event.data, "parent_tool_call_id", None)
 
             if tool_call_id and tool_name != "unknown":
                 self._tool_call_names[tool_call_id] = tool_name
@@ -79,8 +96,12 @@ class EventHandlerMixin:
             # Log tool names and call IDs at INFO; full args only at DEBUG
             # to avoid leaking sensitive content (file_text, secrets) to log files.
             args_keys = list((args or {}).keys())
-            logger.info(f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args_keys={args_keys}")
-            logger.debug(f"TOOL START args: {tool_name} call_id={tool_call_id} args={args}")
+            logger.info(
+                f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args_keys={args_keys}"
+            )
+            logger.debug(
+                f"TOOL START args: {tool_name} call_id={tool_call_id} args={args}"
+            )
 
             # Skip child tool events (those inside subagents) to match CLI
             # behavior — the CLI only shows agent lifecycle, not individual
@@ -90,10 +111,6 @@ class EventHandlerMixin:
 
             # Only surface write-type tools + intent reporting; suppress
             # read-only exploration tools (grep, view, glob, sql, etc.)
-            _VISIBLE_TOOLS = {
-                "bash", "create", "edit", "task", "ask_user",
-                "report_intent", "update_todo", "show_file",
-            }
             if tool_name not in _VISIBLE_TOOLS:
                 return
 
@@ -106,44 +123,52 @@ class EventHandlerMixin:
 
     def _on_tool_complete(self, event):
         try:
-            tool_call_id = getattr(event.data, 'tool_call_id', None)
-            tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'mcp_tool_name', None)
+            tool_call_id = getattr(event.data, "tool_call_id", None)
+            tool_name = getattr(event.data, "tool_name", None) or getattr(
+                event.data, "mcp_tool_name", None
+            )
             if not tool_name and tool_call_id:
                 tool_name = self._tool_call_names.get(tool_call_id, "unknown")
             if not tool_name:
                 tool_name = "unknown"
 
-            parent_tool_call_id = getattr(event.data, 'parent_tool_call_id', None)
-            result = getattr(event.data, 'result', None)
-            result_content = result.content if result and hasattr(result, 'content') else None
+            parent_tool_call_id = getattr(event.data, "parent_tool_call_id", None)
+            result = getattr(event.data, "result", None)
+            result_content = (
+                result.content if result and hasattr(result, "content") else None
+            )
 
-            logger.info(f"TOOL COMPLETE: {tool_name} call_id={tool_call_id} result_len={len(result_content) if result_content else 0}")
+            logger.info(
+                f"TOOL COMPLETE: {tool_name} call_id={tool_call_id} result_len={len(result_content) if result_content else 0}"
+            )
 
             if tool_call_id and tool_call_id in self._tool_call_names:
                 del self._tool_call_names[tool_call_id]
 
             # show_file: send file content as a formatted code block to the user
             if tool_name == "show_file" and result_content and self.current_callback:
-                sf_args = self._show_file_args.pop(tool_call_id, {}) if tool_call_id else {}
+                sf_args = (
+                    self._show_file_args.pop(tool_call_id, {}) if tool_call_id else {}
+                )
                 path = sf_args.get("path", "")
                 ext = path.rsplit(".", 1)[-1] if "." in path else ""
                 caption = f"`{path}`\n" if path else ""
                 # Telegram message limit ~4096 chars; reserve space for fences and caption
                 max_content = 3900 - len(caption)
-                body = result_content[:max_content] + ("\n… (truncated)" if len(result_content) > max_content else "")
+                body = result_content[:max_content] + (
+                    "\n… (truncated)" if len(result_content) > max_content else ""
+                )
                 formatted = f"{caption}```{ext}\n{body}\n```"
                 self._dispatch_async(self.current_callback, formatted)
                 return
 
-            _VISIBLE_TOOLS = {
-                "bash", "create", "edit", "task", "ask_user",
-                "report_intent", "update_todo", "show_file",
-            }
             if tool_name not in _VISIBLE_TOOLS:
                 return
 
             max_len = None if streaming_mode_var.get() else 100
-            msg = format_tool_complete(tool_name, result_content, max_result_length=max_len)
+            msg = format_tool_complete(
+                tool_name, result_content, max_result_length=max_len
+            )
             if msg and ctx.status_callback:
                 # Skip child tool completions (inside subagents) to match CLI.
                 if parent_tool_call_id:
@@ -154,7 +179,9 @@ class EventHandlerMixin:
 
     def _on_subagent_started(self, event):
         try:
-            display_name = getattr(event.data, 'agent_display_name', None) or getattr(event.data, 'agent_name', 'Agent')
+            display_name = getattr(event.data, "agent_display_name", None) or getattr(
+                event.data, "agent_name", "Agent"
+            )
             msg = f"🤖 {display_name} started"
             if ctx.status_callback:
                 self._dispatch_async(ctx.status_callback, msg)
@@ -164,14 +191,22 @@ class EventHandlerMixin:
 
     def _on_subagent_completed(self, event):
         try:
-            display_name = getattr(event.data, 'agent_display_name', None) or getattr(event.data, 'agent_name', 'Agent')
-            result = getattr(event.data, 'result', None)
-            result_content = result.content if result and hasattr(result, 'content') else None
+            display_name = getattr(event.data, "agent_display_name", None) or getattr(
+                event.data, "agent_name", "Agent"
+            )
+            result = getattr(event.data, "result", None)
+            result_content = (
+                result.content if result and hasattr(result, "content") else None
+            )
             if result_content:
                 # In streaming mode, keep snippet short for the Working card;
                 # the full result will appear in the final streamed response.
                 # In non-streaming mode, show full result (it's the only output users see).
-                snippet = truncate_text(result_content, 120) if streaming_mode_var.get() else result_content
+                snippet = (
+                    truncate_text(result_content, 120)
+                    if streaming_mode_var.get()
+                    else result_content
+                )
                 msg = f"✓ {display_name} → {snippet}"
             else:
                 msg = f"✓ {display_name} completed"
@@ -201,7 +236,7 @@ class EventHandlerMixin:
                 self.completion_callback()
 
     def _on_session_error(self, event):
-        error_msg = getattr(event.data, 'message', None) or str(event.data)
+        error_msg = getattr(event.data, "message", None) or str(event.data)
         logger.error(f"❌ Session error event: {error_msg}")
         if ctx.status_callback:
             self._dispatch_async(ctx.status_callback, f"❌ Session error: {error_msg}")
@@ -212,13 +247,13 @@ class EventHandlerMixin:
 
     def _on_assistant_usage(self, event):
         self.last_assistant_usage = event.data
-        if hasattr(event.data, 'model') and event.data.model:
+        if hasattr(event.data, "model") and event.data.model:
             self.current_model = event.data.model
             logger.info(f"Model from usage event: {self.current_model}")
         logger.info(f"Assistant Usage Received: {event.data}")
 
     def _on_session_model_change(self, event):
-        new_model = getattr(event.data, 'new_model', None)
+        new_model = getattr(event.data, "new_model", None)
         if new_model:
             logger.info(f"Session model changed to: {new_model}")
         else:
@@ -226,7 +261,9 @@ class EventHandlerMixin:
 
     def _on_reasoning_delta(self, event):
         """Reasoning deltas are internal thinking — don't send to user, only log."""
-        content = getattr(event.data, 'delta_content', None) or getattr(event.data, 'content', None)
+        content = getattr(event.data, "delta_content", None) or getattr(
+            event.data, "content", None
+        )
         if content:
             logger.debug(f"🧠 Reasoning: {truncate_text(content, 200)}")
 
@@ -234,21 +271,27 @@ class EventHandlerMixin:
         """Token-by-token streaming delta — forward to delta_callback when streaming enabled."""
         if not self.delta_callback:
             return
-        content = getattr(event.data, 'delta_content', None) or getattr(event.data, 'content', None)
+        content = getattr(event.data, "delta_content", None) or getattr(
+            event.data, "content", None
+        )
         if content:
             self._dispatch_async(self.delta_callback, content)
 
     def _on_compaction_start(self, event):
         logger.info("📦 Session compaction started")
         if ctx.status_callback:
-            self._dispatch_async(ctx.status_callback, "📦 Context compaction in progress...")
+            self._dispatch_async(
+                ctx.status_callback, "📦 Context compaction in progress..."
+            )
 
     def _on_compaction_complete(self, event):
-        success = getattr(event.data, 'success', None)
+        success = getattr(event.data, "success", None)
         status = "✅" if success else "⚠️"
         logger.info(f"📦 Session compaction complete (success={success})")
         if ctx.status_callback:
-            self._dispatch_async(ctx.status_callback, f"{status} Context compaction complete")
+            self._dispatch_async(
+                ctx.status_callback, f"{status} Context compaction complete"
+            )
 
     # ── Async dispatch helper ─────────────────────────────────────────
 
