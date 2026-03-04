@@ -11,6 +11,7 @@ from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
 from src.core.context import streaming_mode
 from src.ui.streamer import MessageSender
+from src.ui.menus import _write_session_summary
 
 from src.handlers.utils import security_check, check_project_selected
 
@@ -91,7 +92,7 @@ async def chat_handler(
     # Prevent sending while session is busy (feature #5)
     if service._chat_lock.locked():
         await update.message.reply_text(
-            "⏳ Please wait for the current request to finish."
+            "⏳ Please wait for the current request to finish. Use /cancel to abort it."
         )
         return
 
@@ -128,6 +129,7 @@ async def chat_handler(
     if not user_text:
         return
 
+    original_user_text = user_text
     if context.user_data.get("plan_mode"):
         user_text = _PLAN_PROMPT + user_text
     else:
@@ -247,7 +249,7 @@ async def chat_handler(
             logger.info(
                 f"⏳ Awaiting user response for interaction {interaction_id}..."
             )
-            result = await future
+            result = await asyncio.wait_for(future, timeout=INTERACTION_TTL)
             logger.info(f"✅ User response received for {interaction_id}: {result}")
             return result
 
@@ -301,6 +303,11 @@ async def chat_handler(
         else:
             full_response = "".join(response_chunks)
             await sender.send_response(full_response, footer)
+
+        # Persist clean summary so /sessions shows meaningful titles
+        session_id = getattr(getattr(service, "session_info", None), "session_id", None)
+        if session_id and original_user_text:
+            _write_session_summary(session_id, original_user_text)
 
     except asyncio.CancelledError:
         # /cancel was invoked — just dismiss the working message silently

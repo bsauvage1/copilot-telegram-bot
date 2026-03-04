@@ -18,15 +18,19 @@ WAITING_PROJECT_NAME = 1
 async def _safe_reset_session(query) -> bool:
     """Reset session only if no chat is in flight. Returns False and alerts user if busy."""
     if service._chat_lock.locked():
-        await query.answer("⏳ A request is in progress — please wait.", show_alert=True)
+        await query.answer(
+            "⏳ A request is in progress — please wait.", show_alert=True
+        )
         return False
     await service.reset_session()
     return True
 
 
-async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYPE, query=None):
+async def _switch_project(
+    path: Path, message, context: ContextTypes.DEFAULT_TYPE, query=None
+):
     """Common project-switching logic used by proj:, proj_granted:, and create_project_name."""
-    context.user_data['plan_mode'] = False
+    context.user_data["plan_mode"] = False
     await service.set_working_directory(str(path))
 
     # Delete the project selector card
@@ -38,6 +42,7 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
 
     # Versions card (service is now running with correct CWD)
     from src.handlers.commands import _build_versions_panel
+
     text, keyboard = await _build_versions_panel()
     await message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -53,7 +58,9 @@ async def _handle_interaction_callback(query, update, context):
     interaction_id = parts[1]
     value = parts[2] if len(parts) > 2 else None
 
-    logger.info(f"🔘 Button callback received | Type: {action_type} | ID: {interaction_id} | Value: {value}")
+    logger.info(
+        f"🔘 Button callback received | Type: {action_type} | ID: {interaction_id} | Value: {value}"
+    )
 
     interaction_data = PENDING_INTERACTIONS.get(interaction_id)
 
@@ -65,7 +72,9 @@ async def _handle_interaction_callback(query, update, context):
     if isinstance(interaction_data, dict):
         future = interaction_data.get("future")
         options = interaction_data.get("options", [])
-        logger.info(f"📦 Found interaction data | Future done: {future.done() if future else 'None'} | Options: {options}")
+        logger.info(
+            f"📦 Found interaction data | Future done: {future.done() if future else 'None'} | Options: {options}"
+        )
         if value and value.isdigit() and options:
             index = int(value)
             if 0 <= index < len(options):
@@ -78,14 +87,20 @@ async def _handle_interaction_callback(query, update, context):
     if future and not future.done():
         try:
             if action_type == "perm":
-                result = (value == "allow")
+                result = value == "allow"
                 logger.info(f"✅ Resolving permission future with: {result}")
                 future.set_result(result)
                 # Extract tool name from stored interaction data
-                tool_name = interaction_data.get("tool_name", "Tool") if isinstance(interaction_data, dict) else "Tool"
+                tool_name = (
+                    interaction_data.get("tool_name", "Tool")
+                    if isinstance(interaction_data, dict)
+                    else "Tool"
+                )
                 action_emoji = "✓" if value == "allow" else "✕"
                 action_text = "Allow" if value == "allow" else "Deny"
-                decision_line = f"🛡️ Permission: {tool_name} → {action_text} {action_emoji}"
+                decision_line = (
+                    f"🛡️ Permission: {tool_name} → {action_text} {action_emoji}"
+                )
                 await query.edit_message_text(decision_line)
             elif action_type == "input":
                 logger.info(f"✅ Resolving input future with: {value}")
@@ -96,7 +111,9 @@ async def _handle_interaction_callback(query, update, context):
             logger.info(f"🧹 Cleaned up interaction {interaction_id}")
         except Exception as set_err:
             logger.error(f"❌ Error setting future result: {set_err}", exc_info=True)
-            await query.edit_message_text(f"⚠️ Error processing selection: {str(set_err)}")
+            await query.edit_message_text(
+                f"⚠️ Error processing selection: {str(set_err)}"
+            )
     else:
         logger.warning(f"⚠️ Future for {interaction_id} is None or already done")
         await query.edit_message_text("⚠️ Interaction expired or already handled.")
@@ -110,6 +127,7 @@ def _format_diff_chunk(raw_chunk: str) -> str:
     Telegram to interpret paths and identifiers as clickable links.
     """
     import html as html_lib
+
     return f"<pre>{html_lib.escape(raw_chunk)}</pre>"
 
 
@@ -128,7 +146,11 @@ async def _handle_diff_callback(query, context):
     to_send = chunks[:max_msgs]
     remainder = len(chunks) - len(to_send)
     for i, chunk in enumerate(to_send):
-        header = f"📋 Git Diff (page {i+1}/{len(to_send)}):\n" if len(to_send) > 1 else "📋 Git Diff:\n"
+        header = (
+            f"📋 Git Diff (page {i + 1}/{len(to_send)}):\n"
+            if len(to_send) > 1
+            else "📋 Git Diff:\n"
+        )
         text = header + _format_diff_chunk(chunk)
         if i == 0:
             await query.message.reply_text(text, parse_mode="HTML")
@@ -153,12 +175,24 @@ async def _handle_ls_callback(query, context):
 
     # Full tree: ask for max messages first
     if depth == 2 and max_msgs is None:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("1 message\n(compact)", callback_data="ls:2:1")],
-            [InlineKeyboardButton("3 messages\n(standard)", callback_data="ls:2:3")],
-            [InlineKeyboardButton("5 messages\n(detailed)", callback_data="ls:2:5")],
-        ])
-        await query.edit_message_text("How much of the tree to show?", reply_markup=keyboard)
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("1 message\n(compact)", callback_data="ls:2:1")],
+                [
+                    InlineKeyboardButton(
+                        "3 messages\n(standard)", callback_data="ls:2:3"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "5 messages\n(detailed)", callback_data="ls:2:5"
+                    )
+                ],
+            ]
+        )
+        await query.edit_message_text(
+            "How much of the tree to show?", reply_markup=keyboard
+        )
         return
 
     if max_msgs is None:
@@ -179,16 +213,23 @@ async def _handle_model_callback(query, context):
     """Handle model: callback queries."""
     model = query.data.split(":")[1]
     model_info = next((m for m in service._models_cache if m["id"] == model), None)
-    if model_info and model_info.get("supports_reasoning") and model_info.get("supported_efforts"):
+    if (
+        model_info
+        and model_info.get("supports_reasoning")
+        and model_info.get("supported_efforts")
+    ):
         from src.ui.menus import get_reasoning_keyboard
-        keyboard = get_reasoning_keyboard(model, model_info["supported_efforts"], model_info.get("default_effort"))
+
+        keyboard = get_reasoning_keyboard(
+            model, model_info["supported_efforts"], model_info.get("default_effort")
+        )
         await query.edit_message_text(
-            f"🤖 Model: {model}\n⚠️ Session will be reset (history cleared)\n\nSelect reasoning effort:",
+            f"🤖 Model: {model}\n\nSelect reasoning effort:",
             reply_markup=keyboard,
         )
     else:
         await service.change_model(model)
-        await query.edit_message_text(f"✅ Model: {model} (⚠️ session reset)")
+        await query.edit_message_text(f"✅ Model: {model}")
 
 
 async def _handle_reasoning_callback(query, context):
@@ -196,22 +237,19 @@ async def _handle_reasoning_callback(query, context):
     parts = query.data.split(":")
     model = parts[1]
     effort = parts[2]
+    reasoning_effort = None if effort == "default" else effort
 
-    if effort == "default":
-        service.current_reasoning_effort = None
-    else:
-        service.current_reasoning_effort = effort
-
-    await service.change_model(model, reasoning_effort=service.current_reasoning_effort)
+    await service.change_model(model, reasoning_effort=reasoning_effort)
     effort_display = effort.capitalize() if effort != "default" else "Default"
     await query.edit_message_text(
-        f"✅ Model: {model} | Effort: {effort_display}\n⚠️ Session reset",
+        f"✅ Model: {model} | Effort: {effort_display}",
     )
 
 
 async def _handle_session_callback(query, context):
     """Handle session: callback queries — resume a past session by ID."""
     from src.ui.menus import _clean_summary
+
     session_id = query.data.split(":", 1)[1]
     if session_id == "none":
         await query.answer("No sessions found for this project.", show_alert=True)
@@ -220,17 +258,29 @@ async def _handle_session_callback(query, context):
     session_obj = None
     try:
         sessions = await service.client.list_sessions()
-        session_obj = next((s for s in sessions if getattr(s, 'sessionId', None) == session_id), None)
+        session_obj = next(
+            (s for s in sessions if getattr(s, "sessionId", None) == session_id), None
+        )
     except Exception:
         pass
     msg = await query.message.reply_text(f"🔄 Resuming session {session_id[-8:]}...")
     try:
         await service.resume_session_by_id(session_id)
-        summary = _clean_summary(getattr(session_obj, 'summary', None)) if session_obj else None
+        summary = (
+            _clean_summary(getattr(session_obj, "summary", None))
+            if session_obj
+            else None
+        )
+        if not summary:
+            from src.ui.menus import _read_plan_summary
+
+            summary = _read_plan_summary(session_id)
         if summary:
-            await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}\n\n📝 Summary:\n{summary}")
+            await msg.edit_text(
+                f"✅ Session resumed: {session_id[-8:]}\n\n📝 Summary:\n{summary}"
+            )
         else:
-            await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}\n_(No summary available)_")
+            await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}")
     except Exception as e:
         logger.error(f"Session resume failed: {e}")
         await msg.edit_text(f"⚠️ Failed to resume session: {e}")
@@ -239,6 +289,7 @@ async def _handle_session_callback(query, context):
 async def _handle_sessions_all_callback(query, context):
     """Show sessions from all projects (no CWD filter)."""
     from src.ui.menus import get_sessions_keyboard
+
     await query.edit_message_text("🔄 Fetching all sessions...")
     try:
         sessions = await service.client.list_sessions()
@@ -273,6 +324,7 @@ async def _handle_project_callback(query, context):
 async def _handle_granted_project_callback(query, context):
     """Handle proj_granted: callback queries."""
     from src.config import GRANTED_PROJECT_PATHS
+
     try:
         idx = int(query.data.split(":")[1])
         if idx >= len(GRANTED_PROJECT_PATHS):
@@ -291,6 +343,7 @@ async def _handle_granted_project_callback(query, context):
 def _mode_picker_header(active_mode: str) -> str:
     """Build the /autopilot picker header, noting permissions flavor when in autopilot."""
     from src.handlers.commands import _MODE_LABELS
+
     label = _MODE_LABELS.get(active_mode, active_mode)
     if active_mode == "autopilot":
         flavor = "all permissions" if service.allow_all_tools else "limited permissions"
@@ -302,6 +355,7 @@ async def _handle_mode_callback(query, context):
     """Handle /autopilot mode picker button taps."""
     from src.handlers.commands import _MODE_LABELS, _MODE_DESCRIPTIONS
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     mode = query.data.split(":", 1)[1]  # e.g. "mode:autopilot" → "autopilot"
     if not service.session:
         await query.edit_message_text("⚠️ No active session — select a project first.")
@@ -310,9 +364,23 @@ async def _handle_mode_callback(query, context):
     # Autopilot: show CLI-matching confirmation before activating
     if mode == "autopilot":
         buttons = [
-            [InlineKeyboardButton("✅ Enable all permissions (recommended)", callback_data="autopilot_confirm:allow_all")],
-            [InlineKeyboardButton("⚠️ Continue with limited permissions", callback_data="autopilot_confirm:limited")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="autopilot_confirm:cancel")],
+            [
+                InlineKeyboardButton(
+                    "✅ Enable all permissions (recommended)",
+                    callback_data="autopilot_confirm:allow_all",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⚠️ Continue with limited permissions",
+                    callback_data="autopilot_confirm:limited",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel", callback_data="autopilot_confirm:cancel"
+                )
+            ],
         ]
         await query.edit_message_text(
             "🚀 <b>Enable Autopilot Mode</b>\n\n"
@@ -327,31 +395,37 @@ async def _handle_mode_callback(query, context):
 
     try:
         resp = await service.client._client.request(
-            "session.mode.set",
-            {"sessionId": service.session.session_id, "mode": mode}
+            "session.mode.set", {"sessionId": service.session.session_id, "mode": mode}
         )
         active_mode = resp.get("mode", mode)
     except Exception as e:
         logger.error(f"mode.set failed: {e}")
-        await query.edit_message_text("⚠️ Failed to set mode — check bot logs for details.")
+        await query.edit_message_text(
+            "⚠️ Failed to set mode — check bot logs for details."
+        )
         return
 
     # Keep service.agent_mode in sync; also sync plan_mode flag for footer display
     service.agent_mode = active_mode
-    context.user_data['plan_mode'] = (active_mode == "plan")
+    context.user_data["plan_mode"] = active_mode == "plan"
     service.save_prefs()
 
     label = _MODE_LABELS.get(active_mode, active_mode)
     buttons = [
-        [InlineKeyboardButton(
-            f"{'✅ ' if m == active_mode else ''}{_MODE_LABELS[m]}",
-            callback_data=f"mode:{m}"
-        )]
+        [
+            InlineKeyboardButton(
+                f"{'✅ ' if m == active_mode else ''}{_MODE_LABELS[m]}",
+                callback_data=f"mode:{m}",
+            )
+        ]
         for m in ("interactive", "plan", "autopilot")
     ]
     await query.edit_message_text(
-        _mode_picker_header(active_mode) + "\n\n"
-        + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        _mode_picker_header(active_mode)
+        + "\n\n"
+        + "\n".join(
+            f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS
+        ),
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -360,6 +434,7 @@ async def _handle_autopilot_confirm_callback(query, context):
     """Handle the autopilot permission confirmation step."""
     from src.handlers.commands import _MODE_LABELS, _MODE_DESCRIPTIONS
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     choice = query.data.split(":", 1)[1]  # allow_all | limited | cancel
 
     if choice == "cancel":
@@ -367,15 +442,20 @@ async def _handle_autopilot_confirm_callback(query, context):
         current = service.agent_mode
         label = _MODE_LABELS.get(current, current)
         buttons = [
-            [InlineKeyboardButton(
-                f"{'✅ ' if m == current else ''}{_MODE_LABELS[m]}",
-                callback_data=f"mode:{m}"
-            )]
+            [
+                InlineKeyboardButton(
+                    f"{'✅ ' if m == current else ''}{_MODE_LABELS[m]}",
+                    callback_data=f"mode:{m}",
+                )
+            ]
             for m in ("interactive", "plan", "autopilot")
         ]
         await query.edit_message_text(
-            _mode_picker_header(current) + "\n\n"
-            + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+            _mode_picker_header(current)
+            + "\n\n"
+            + "\n".join(
+                f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS
+            ),
             reply_markup=InlineKeyboardMarkup(buttons),
         )
         return
@@ -384,16 +464,18 @@ async def _handle_autopilot_confirm_callback(query, context):
     try:
         resp = await service.client._client.request(
             "session.mode.set",
-            {"sessionId": service.session.session_id, "mode": "autopilot"}
+            {"sessionId": service.session.session_id, "mode": "autopilot"},
         )
         active_mode = resp.get("mode", "autopilot")
     except Exception as e:
         logger.error(f"autopilot mode.set failed: {e}")
-        await query.edit_message_text("⚠️ Failed to set Autopilot mode — check bot logs for details.")
+        await query.edit_message_text(
+            "⚠️ Failed to set Autopilot mode — check bot logs for details."
+        )
         return
 
     service.agent_mode = active_mode
-    context.user_data['plan_mode'] = False
+    context.user_data["plan_mode"] = False
 
     if choice == "allow_all":
         service.allow_all_tools = True
@@ -402,15 +484,20 @@ async def _handle_autopilot_confirm_callback(query, context):
     service.save_prefs()
 
     buttons = [
-        [InlineKeyboardButton(
-            f"{'✅ ' if m == active_mode else ''}{_MODE_LABELS[m]}",
-            callback_data=f"mode:{m}"
-        )]
+        [
+            InlineKeyboardButton(
+                f"{'✅ ' if m == active_mode else ''}{_MODE_LABELS[m]}",
+                callback_data=f"mode:{m}",
+            )
+        ]
         for m in ("interactive", "plan", "autopilot")
     ]
     await query.edit_message_text(
-        _mode_picker_header(active_mode) + "\n\n"
-        + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        _mode_picker_header(active_mode)
+        + "\n\n"
+        + "\n".join(
+            f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS
+        ),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
@@ -418,7 +505,7 @@ async def _handle_autopilot_confirm_callback(query, context):
 
 async def _handle_streamer_reset_callback(query, context):
     """Reset session when user taps the 'Reset session now' button in /streamer_mode."""
-    context.user_data['plan_mode'] = False
+    context.user_data["plan_mode"] = False
     if not await _safe_reset_session(query):
         return
     state = "ENABLED 📡" if service.streaming_enabled else "DISABLED 🔇"
@@ -430,7 +517,12 @@ async def _handle_mcp_callback(query, context):
     """Handle mcp_toggle:<name> and mcp_reload callbacks."""
     import html as _html
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    from src.core.mcp_config import load_config, get_builtin_servers, toggle_server, MCP_CONFIG_PATH
+    from src.core.mcp_config import (
+        load_config,
+        get_builtin_servers,
+        toggle_server,
+        MCP_CONFIG_PATH,
+    )
 
     data = query.data
 
@@ -458,23 +550,33 @@ async def _handle_mcp_callback(query, context):
 
     lines = ["🔌 <b>MCP Servers</b>\n", "<b>Built-in (SDK managed):</b>"]
     for bname, srv in builtins.items():
-        lines.append(f"  ✅ {_html.escape(bname)} ({_html.escape(srv.get('type', '?'))})")
+        lines.append(
+            f"  ✅ {_html.escape(bname)} ({_html.escape(srv.get('type', '?'))})"
+        )
     lines.append("\n<b>User-configured:</b>")
     for sname, srv in user_servers.items():
         icon = "⬜" if sname in disabled else "✅"
         kind = _html.escape(srv.get("type", "?"))
         detail = _html.escape(srv.get("url", srv.get("command", "")))
-        lines.append(f"  {icon} <b>{_html.escape(sname)}</b> ({kind})  <code>{detail}</code>")
+        lines.append(
+            f"  {icon} <b>{_html.escape(sname)}</b> ({kind})  <code>{detail}</code>"
+        )
     now_enabled = name not in disabled
     status = "enabled ✅" if now_enabled else "disabled ⬜"
-    lines.append(f"\n<i>{_html.escape(name)} is now {status} — reload session to apply.</i>")
+    lines.append(
+        f"\n<i>{_html.escape(name)} is now {status} — reload session to apply.</i>"
+    )
     lines.append(f"\n<code>{_html.escape(str(MCP_CONFIG_PATH))}</code>")
 
     buttons = []
     for sname in user_servers:
         label = f"{'▶️ Enable' if sname in disabled else '⏸ Disable'} {sname}"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"mcp_toggle:{sname}")])
-    buttons.append([InlineKeyboardButton("🔄 Reload session now", callback_data="mcp_reload")])
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"mcp_toggle:{sname}")]
+        )
+    buttons.append(
+        [InlineKeyboardButton("🔄 Reload session now", callback_data="mcp_reload")]
+    )
 
     await query.edit_message_text(
         "\n".join(lines),
@@ -486,7 +588,10 @@ async def _handle_mcp_callback(query, context):
 async def _handle_skill_callback(query, context) -> None:
     """Handle skill_toggle:<name> and skill_reload callbacks."""
     from src.core.skills_config import (
-        scan_skills, get_disabled_skills, toggle_skill, skill_callback_name,
+        scan_skills,
+        get_disabled_skills,
+        toggle_skill,
+        skill_callback_name,
     )
     from src.core.context import ctx
 
@@ -512,7 +617,9 @@ async def _handle_skill_callback(query, context) -> None:
     # Match against truncated names (cb_name was produced by skill_callback_name())
     match = next((s for s in skills if skill_callback_name(s["name"]) == cb_name), None)
     if not match:
-        await query.answer("Skill not found — it may have been removed.", show_alert=True)
+        await query.answer(
+            "Skill not found — it may have been removed.", show_alert=True
+        )
         return
 
     toggle_skill(match["name"])
@@ -532,11 +639,16 @@ def build_skills_panel(
     import html as _html
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from src.core.skills_config import (
-        get_skill_dirs, get_user_skill_dirs, USER_SKILLS_DIR, skill_callback_name,
+        get_skill_dirs,
+        get_user_skill_dirs,
+        USER_SKILLS_DIR,
+        skill_callback_name,
     )
 
     dirs = get_skill_dirs(workspace)
-    user_dirs = get_user_skill_dirs()  # already read by scan_skills; one more read here is fine
+    user_dirs = (
+        get_user_skill_dirs()
+    )  # already read by scan_skills; one more read here is fine
 
     lines = ["🧩 <b>Skills</b>\n", "<b>Skill directories:</b>"]
     if dirs:
@@ -544,7 +656,9 @@ def build_skills_panel(
             source = "👤 user" if d in user_dirs else "📁 project"
             lines.append(f"  {source}  <code>{_html.escape(str(d))}</code>")
     else:
-        lines.append(f"  None found  —  add files to <code>{_html.escape(str(USER_SKILLS_DIR))}</code>")
+        lines.append(
+            f"  None found  —  add files to <code>{_html.escape(str(USER_SKILLS_DIR))}</code>"
+        )
 
     lines.append("\n<b>Loaded skills:</b>")
     if not skills:
@@ -562,8 +676,12 @@ def build_skills_panel(
         cb_name = skill_callback_name(s["name"])
         display = s["name"] if len(s["name"]) <= 30 else s["name"][:29] + "…"
         label = f"{'▶️ Enable' if s['name'] in disabled else '⏸ Disable'} {display}"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"skill_toggle:{cb_name}")])
-    buttons.append([InlineKeyboardButton("🔄 Reload session now", callback_data="skill_reload")])
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"skill_toggle:{cb_name}")]
+        )
+    buttons.append(
+        [InlineKeyboardButton("🔄 Reload session now", callback_data="skill_reload")]
+    )
 
     return "\n".join(lines), InlineKeyboardMarkup(buttons)
 
@@ -625,14 +743,24 @@ async def _handle_agent_detail_callback(query, context):
 
     is_current = service.selected_agent == key
     select_label = "✅ Already selected" if is_current else "✅ Select"
-    model_line = f"\n🤖 Model: <code>{_html.escape(meta['model'])}</code>" if meta.get("model") else ""
+    model_line = (
+        f"\n🤖 Model: <code>{_html.escape(meta['model'])}</code>"
+        if meta.get("model")
+        else ""
+    )
     await query.edit_message_text(
         f"{meta['icon']} <b>{_html.escape(meta['name'])}</b>{model_line}\n\n{_html.escape(meta['description'])}",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(select_label, callback_data=f"agent_select:{key}"),
-            InlineKeyboardButton("◀️ Back", callback_data="agent_back"),
-        ]]),
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        select_label, callback_data=f"agent_select:{key}"
+                    ),
+                    InlineKeyboardButton("◀️ Back", callback_data="agent_back"),
+                ]
+            ]
+        ),
     )
 
 
@@ -649,10 +777,13 @@ async def _handle_agent_back_callback(query, context):
 async def _handle_versions_callback(query, refresh: bool = False):
     """Handle versions_open / versions_refresh callbacks."""
     from src.handlers.commands import _build_versions_panel
+
     text, keyboard = await _build_versions_panel()
     if refresh:
         try:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            await query.edit_message_text(
+                text, parse_mode="HTML", reply_markup=keyboard
+            )
         except BadRequest as e:
             if "message is not modified" not in str(e).lower():
                 raise
@@ -669,6 +800,7 @@ async def _handle_changelog_callback(query, component: str):
         return
     from src.handlers.commands import _fetch_whats_changed
     from src.config import TELEGRAM_MSG_LIMIT
+
     text = await _fetch_whats_changed(component)
     if not query.message:
         await query.answer("Cannot show changelog from this context", show_alert=True)
@@ -693,7 +825,7 @@ async def _handle_changelog_callback(query, component: str):
                     if len(sub_candidate) > limit:
                         if sub:
                             chunks.append(sub)
-                        sub = line[:limit - 15] + "… (truncated)"
+                        sub = line[: limit - 15] + "… (truncated)"
                     else:
                         sub = sub_candidate
                 current_chunk = sub
@@ -704,12 +836,15 @@ async def _handle_changelog_callback(query, component: str):
     if current_chunk:
         chunks.append(current_chunk)
     for i, chunk in enumerate(chunks[:5]):
-        suffix = f"\n\n<i>({i + 1}/{min(len(chunks), 5)})</i>" if len(chunks) > 1 else ""
+        suffix = (
+            f"\n\n<i>({i + 1}/{min(len(chunks), 5)})</i>" if len(chunks) > 1 else ""
+        )
         await query.message.reply_text(chunk + suffix, parse_mode="HTML")
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): return
+    if not await security_check(update):
+        return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
 
     query = update.callback_query
@@ -776,8 +911,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_project_callback(query, context)
             return ConversationHandler.END
         elif data == "proj_new":
-            context.user_data['start_message_id'] = query.message.message_id
-            context.user_data['start_chat_id'] = query.message.chat_id
+            context.user_data["start_message_id"] = query.message.message_id
+            context.user_data["start_chat_id"] = query.message.chat_id
             await query.message.reply_text("New project name:")
             return WAITING_PROJECT_NAME
     except Exception as e:
@@ -786,7 +921,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): return
+    if not await security_check(update):
+        return
     name = re.sub(r"[^\w-]+", "_", update.message.text).strip("_")
     if not name:
         await update.message.reply_text("⚠️ Invalid name. Try again or /cancel.")
@@ -794,15 +930,17 @@ async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     path = WORKSPACE_PATH / name
     already_exists = path.exists()
     if already_exists:
-        await update.message.reply_text(f"⚠️ Project {name} already exists. Switched to it.")
+        await update.message.reply_text(
+            f"⚠️ Project {name} already exists. Switched to it."
+        )
     else:
         path.mkdir(exist_ok=True)
         await update.message.reply_text(f"✅ Created: {name}")
     try:
         await _switch_project(path, update.message, context)
         # Delete the project selector card (versions card persists separately)
-        start_msg_id = context.user_data.pop('start_message_id', None)
-        start_chat_id = context.user_data.pop('start_chat_id', None)
+        start_msg_id = context.user_data.pop("start_message_id", None)
+        start_chat_id = context.user_data.pop("start_chat_id", None)
         if start_msg_id and start_chat_id:
             try:
                 await context.bot.delete_message(
@@ -818,19 +956,26 @@ async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def cancel_create_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel project creation and re-show the start menu with project keyboard."""
-    if not await security_check(update): return
+    if not await security_check(update):
+        return
     logger.info("Project creation cancelled, returning to start menu")
     # Clean up stored message IDs
-    context.user_data.pop('start_message_id', None)
-    context.user_data.pop('start_chat_id', None)
+    context.user_data.pop("start_message_id", None)
+    context.user_data.pop("start_chat_id", None)
     from src.handlers.commands import build_start_menu
+
     selector_text, selector_kb = await build_start_menu()
     await update.message.reply_text(selector_text, reply_markup=selector_kb)
     return ConversationHandler.END
 
 
-async def reject_command_during_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reject_command_during_creation(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     """Reject slash commands (other than /cancel) during project name input."""
-    if not await security_check(update): return
-    await update.message.reply_text("⚠️ Please enter a project name or use /cancel to go back.")
+    if not await security_check(update):
+        return
+    await update.message.reply_text(
+        "⚠️ Please enter a project name or use /cancel to go back."
+    )
     return WAITING_PROJECT_NAME

@@ -23,7 +23,11 @@ from src.config import (
 )
 from src.core.context import ctx
 from src.core.git import get_git_info as _get_git_info
-from src.core.filesystem import get_directory_listing, get_project_structure, get_project_stats
+from src.core.filesystem import (
+    get_directory_listing,
+    get_project_structure,
+    get_project_stats,
+)
 from src.core.usage import SessionUsageTracker, SessionInfo
 from src.core.events import EventHandlerMixin
 from src.core.session import SessionMixin
@@ -66,7 +70,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         config: Dict[str, Any] = {"cwd": str(ctx.root_path)}
         if GITHUB_TOKEN:
             config["github_token"] = GITHUB_TOKEN
-        system_cli = shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+        system_cli = shutil.which("copilot") or os.path.expanduser(
+            "~/.local/bin/copilot"
+        )
         if os.path.isfile(system_cli):
             config["cli_path"] = system_cli
             logger.info(f"🔧 Using system Copilot CLI: {system_cli}")
@@ -98,7 +104,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.infinite_sessions_enabled: bool = False
         self.streaming_enabled: bool = False
         self.agent_mode: str = "interactive"  # interactive | plan | autopilot
-        self.selected_agent: Optional[str] = None  # key of active custom agent, or None for default
+        self.selected_agent: Optional[str] = (
+            None  # key of active custom agent, or None for default
+        )
         self.extra_dirs: List[str] = []  # additional directories added via /add_dir
 
         # Session info from SDK events (single source of truth)
@@ -130,7 +138,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         # Defense-in-depth: ensure the resolved path is within an allowed root.
         from src.config import GRANTED_PROJECT_PATHS
-        allowed_roots = [WORKSPACE_PATH.resolve()] + [gp.resolve() for gp in GRANTED_PROJECT_PATHS]
+
+        allowed_roots = [WORKSPACE_PATH.resolve()] + [
+            gp.resolve() for gp in GRANTED_PROJECT_PATHS
+        ]
         if not any(_is_within(p, root) for root in allowed_roots):
             raise PermissionError(f"Path is outside allowed workspace boundaries: {p}")
 
@@ -161,7 +172,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             config: Dict[str, Any] = {"cwd": str(p)}
             if GITHUB_TOKEN:
                 config["github_token"] = GITHUB_TOKEN
-            system_cli = shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+            system_cli = shutil.which("copilot") or os.path.expanduser(
+                "~/.local/bin/copilot"
+            )
             if os.path.isfile(system_cli):
                 config["cli_path"] = system_cli
             self.client = CopilotClient(config)
@@ -217,11 +230,17 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             cost = "0.0"
 
             if self.last_assistant_usage:
-                if hasattr(self.last_assistant_usage, 'model') and self.last_assistant_usage.model:
+                if (
+                    hasattr(self.last_assistant_usage, "model")
+                    and self.last_assistant_usage.model
+                ):
                     model = self.last_assistant_usage.model
                 elif self.current_model:
                     model = self.current_model
-                if hasattr(self.last_assistant_usage, 'cost') and self.last_assistant_usage.cost is not None:
+                if (
+                    hasattr(self.last_assistant_usage, "cost")
+                    and self.last_assistant_usage.cost is not None
+                ):
                     cost = f"{self.last_assistant_usage.cost:.2f}"
             elif self.current_model:
                 model = self.current_model
@@ -241,8 +260,12 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         Returns True only if the RPC call to the live session also succeeded."""
         _VALID_MODES = ("interactive", "plan", "autopilot")
         if mode not in _VALID_MODES:
-            raise ValueError(f"Invalid agent mode '{mode}'. Must be one of: {_VALID_MODES}")
-        self.agent_mode = mode  # intentional: store desired mode regardless of session state
+            raise ValueError(
+                f"Invalid agent mode '{mode}'. Must be one of: {_VALID_MODES}"
+            )
+        self.agent_mode = (
+            mode  # intentional: store desired mode regardless of session state
+        )
         if self.session and self.session.session_id:
             try:
                 await self.client._client.request(
@@ -252,7 +275,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 logger.info(f"Agent mode set to '{mode}' via RPC")
                 return True
             except Exception as e:
-                logger.warning(f"session.mode.set RPC failed: {e} — will apply on next session start")
+                logger.warning(
+                    f"session.mode.set RPC failed: {e} — will apply on next session start"
+                )
         return False
 
     # ── Session export ────────────────────────────────────────────────
@@ -307,13 +332,16 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             if isinstance(client_options, dict)
             else getattr(client_options, "cli_path", None)
         )
-        discovered_cli = shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+        discovered_cli = shutil.which("copilot") or os.path.expanduser(
+            "~/.local/bin/copilot"
+        )
         cli_candidates = [c for c in (configured_cli, discovered_cli) if c]
 
         for cli_candidate in cli_candidates:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    cli_candidate, "--version",
+                    cli_candidate,
+                    "--version",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -326,7 +354,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         try:
             status = await self.client.get_status()
-            if hasattr(status, 'version') and status.version:
+            if hasattr(status, "version") and status.version:
                 return status.version
         except Exception as e:
             logger.debug(f"SDK get_status() failed: {e}")
@@ -339,7 +367,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         try:
             status = await self.client.get_auth_status()
             logger.debug(f"Auth Check: {status}")
-            return status.login if hasattr(status, 'login') else "User"
+            return status.login if hasattr(status, "login") else "User"
         except Exception:
             return "User"
 
@@ -356,9 +384,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             models = await self.client.list_models()
             results = []
             for m in models:
-                mid = str(m.id) if hasattr(m, 'id') else str(m)
+                mid = str(m.id) if hasattr(m, "id") else str(m)
                 mult = "1x"
-                if hasattr(m, 'billing') and hasattr(m.billing, 'multiplier'):
+                if hasattr(m, "billing") and hasattr(m.billing, "multiplier"):
                     multiplier_val = m.billing.multiplier
                     if isinstance(multiplier_val, (int, float)):
                         if multiplier_val == int(multiplier_val):
@@ -369,40 +397,52 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                         mult = f"{multiplier_val}x"
 
                 # Cache context window limit from SDK capabilities
-                if hasattr(m, 'capabilities') and hasattr(m.capabilities, 'limits'):
-                    ctx_tokens = getattr(m.capabilities.limits, 'max_context_window_tokens', None)
+                if hasattr(m, "capabilities") and hasattr(m.capabilities, "limits"):
+                    ctx_tokens = getattr(
+                        m.capabilities.limits, "max_context_window_tokens", None
+                    )
                     if ctx_tokens:
                         self._context_limits_cache[mid] = int(ctx_tokens)
 
                 supports_reasoning = bool(
-                    hasattr(m, 'supported_reasoning_efforts') and m.supported_reasoning_efforts
+                    hasattr(m, "supported_reasoning_efforts")
+                    and m.supported_reasoning_efforts
                 )
-                supported_efforts = getattr(m, 'supported_reasoning_efforts', []) or []
-                default_effort = getattr(m, 'default_reasoning_effort', None)
+                supported_efforts = getattr(m, "supported_reasoning_efforts", []) or []
+                default_effort = getattr(m, "default_reasoning_effort", None)
 
-                results.append({
-                    "id": mid,
-                    "multiplier": mult,
-                    "supports_reasoning": supports_reasoning,
-                    "supported_efforts": supported_efforts,
-                    "default_effort": default_effort,
-                })
+                results.append(
+                    {
+                        "id": mid,
+                        "multiplier": mult,
+                        "supports_reasoning": supports_reasoning,
+                        "supported_efforts": supported_efforts,
+                        "default_effort": default_effort,
+                    }
+                )
             self._models_cache = results
 
             # If the user has an active session, ensure its model always appears
             # in the picker, even if models.list hasn't been updated yet.
             active_model = self.current_model
             if active_model and not any(r["id"] == active_model for r in results):
-                results.insert(0, {
-                    "id": active_model,
-                    "multiplier": "1x",
-                    "supports_reasoning": False,
-                    "supported_efforts": [],
-                    "default_effort": None,
-                })
-                logger.info(f"ℹ️  Injected active session model into list: {active_model}")
+                results.insert(
+                    0,
+                    {
+                        "id": active_model,
+                        "multiplier": "1x",
+                        "supports_reasoning": False,
+                        "supported_efforts": [],
+                        "default_effort": None,
+                    },
+                )
+                logger.info(
+                    f"ℹ️  Injected active session model into list: {active_model}"
+                )
 
-            logger.info(f"📊 Cached context limits for {len(self._context_limits_cache)} models")
+            logger.info(
+                f"📊 Cached context limits for {len(self._context_limits_cache)} models"
+            )
             return results
         except Exception as e:
             logger.error(f"Failed to fetch models: {e}")
@@ -425,10 +465,16 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Project info ──────────────────────────────────────────────────
 
-    async def get_project_info_header(self, context_user_data: Optional[dict] = None) -> str:
+    async def get_project_info_header(
+        self, context_user_data: Optional[dict] = None
+    ) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
         model = self.user_selected_model or self.current_model or "Auto"
-        mode = "Plan" if (context_user_data and context_user_data.get('plan_mode')) else "Chat"
+        mode = (
+            "Plan"
+            if (context_user_data and context_user_data.get("plan_mode"))
+            else "Chat"
+        )
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch_line = f"🔀 Branch: {git_info[1:]}\n" if git_info else ""
@@ -443,17 +489,20 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         )
         return header
 
-    async def get_cockpit_message(self, context_user_data: Optional[dict] = None) -> str:
+    async def get_cockpit_message(
+        self, context_user_data: Optional[dict] = None
+    ) -> str:
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
         from src.core.mcp_config import get_enabled_servers, load_config
         from src.core.skills_config import scan_skills, get_disabled_skills
+
         model = self.user_selected_model or self.current_model or "Auto"
         # Use persisted agent_mode as source of truth; sync context flag for footer display
         mode_map = {"plan": "Plan", "autopilot": "Autopilot"}
         mode = mode_map.get(self.agent_mode, "Chat")
         if context_user_data is not None:
-            context_user_data['plan_mode'] = (self.agent_mode == "plan")
+            context_user_data["plan_mode"] = self.agent_mode == "plan"
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch = git_info[1:] if git_info else ""
@@ -469,6 +518,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         skills_total = len(all_skills)
         # Get selected agent display name and total count
         from src.core.agents import get_available_agents
+
         agents = get_available_agents()
         agent_name = ""
         if self.selected_agent:
@@ -493,7 +543,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             skills_enabled=skills_enabled,
             skills_total=skills_total,
             instructions_user=USER_INSTRUCTIONS_PATH.exists(),
-            instructions_project=_proj_instr.exists() if (_proj_instr := project_instructions_path(self.session_info.cwd)) else False,
+            instructions_project=_proj_instr.exists()
+            if (_proj_instr := project_instructions_path(self.session_info.cwd))
+            else False,
         )
 
     def get_directory_listing(self) -> str:
@@ -542,7 +594,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 msg_options: dict = {"prompt": user_message}
                 if attachments:
                     msg_options["attachments"] = attachments
-                await self.session.send_and_wait(msg_options, timeout=CHAT_TIMEOUT)
+                await asyncio.wait_for(
+                    self.session.send_and_wait(msg_options, timeout=CHAT_TIMEOUT),
+                    timeout=CHAT_TIMEOUT + 60,
+                )
                 # abort() causes send_and_wait to return normally once session.idle fires
                 if self._cancelled:
                     raise asyncio.CancelledError("Request cancelled by user")

@@ -2,9 +2,46 @@
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from copilot.client import CopilotClient
 
 AGENTS_DIR = Path.home() / ".copilot" / "agents"
+
+_cached_builtin_agent_keys: list[str] | None = None
+
+
+async def get_builtin_agent_keys(client: "Any") -> list[str]:
+    """Return built-in agent type keys from the CLI tool spec.
+
+    Calls tools.list RPC and extracts the agent_type enum from the task tool's
+    parameter schema. Result is cached for the lifetime of the process.
+
+    Args:
+        client: CopilotClient instance with an active connection.
+
+    Returns:
+        List of built-in agent type strings, e.g. ["explore", "task", ...].
+    """
+    global _cached_builtin_agent_keys
+    if _cached_builtin_agent_keys is not None:
+        return _cached_builtin_agent_keys
+    try:
+        from copilot.generated.rpc import ToolsListParams
+
+        result = await client.rpc.tools.list(ToolsListParams(model=None))
+        for tool in result.tools:
+            if tool.name == "task" and tool.parameters:
+                props = tool.parameters.get("properties", {})
+                agent_type_schema = props.get("agent_type", {})
+                keys = agent_type_schema.get("enum", [])
+                if keys:
+                    _cached_builtin_agent_keys = [str(k) for k in keys]
+                    return _cached_builtin_agent_keys
+    except Exception:
+        pass
+    return []
 
 # Ordered: first match wins. Checked against lowercased key+name+description.
 _ICON_RULES = [

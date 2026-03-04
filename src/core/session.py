@@ -18,22 +18,37 @@ from src.core.mcp_config import get_enabled_servers
 from src.core.skills_config import get_skill_dirs_for_session, get_disabled_skills
 from src.core.agents import get_available_agents, parse_agent_prompt, AGENTS_DIR
 from src.core.usage import SessionUsageTracker, SessionInfo
-from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path, safe_read_instructions, EMPTY_FILE_SENTINEL
+from src.core.instructions import (
+    USER_INSTRUCTIONS_PATH,
+    project_instructions_path,
+    safe_read_instructions,
+    EMPTY_FILE_SENTINEL,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ── Tool allowlist (auto-approved without asking user) ────────────────
 
-_TOOL_ALLOWLIST = frozenset({
-    "report_intent", "task", "list_files", "read_file",
-    "view", "glob", "grep", "fetch_copilot_cli_documentation",
-    "ask_user", "update_todo",
-})
+_TOOL_ALLOWLIST = frozenset(
+    {
+        "report_intent",
+        "task",
+        "list_files",
+        "workspace_read_file",
+        "view",
+        "glob",
+        "grep",
+        "fetch_copilot_cli_documentation",
+        "ask_user",
+        "update_todo",
+    }
+)
 
 
 class _PermissionRequest:
     """Lightweight container for tool permission request data."""
+
     __slots__ = ("tool_name", "arguments")
 
     def __init__(self, name: str, args: dict):
@@ -53,19 +68,43 @@ def _apply_agent_config(svc, cfg: dict) -> None:
         if prompt:
             agents = get_available_agents()
             meta = next((a for a in agents if a["key"] == svc.selected_agent), {})
-            cfg["custom_agents"] = [{
-                "name": svc.selected_agent,
-                "display_name": meta.get("name", svc.selected_agent),
-                "description": meta.get("description", ""),
-                "prompt": prompt,
-                # infer=False: user explicitly picked this agent, so the main
-                # agent should not override the selection via auto-inference
-                "infer": False,
-            }]
+            cfg["custom_agents"] = [
+                {
+                    "name": svc.selected_agent,
+                    "display_name": meta.get("name", svc.selected_agent),
+                    "description": meta.get("description", ""),
+                    "prompt": prompt,
+                    # infer=False: user explicitly picked this agent, so the main
+                    # agent should not override the selection via auto-inference
+                    "infer": False,
+                }
+            ]
             logger.info(f"Custom agent injected: {svc.selected_agent}")
         else:
-            logger.warning(f"Agent '{svc.selected_agent}' file not found — falling back to default agent")
+            logger.warning(
+                f"Agent '{svc.selected_agent}' file not found — falling back to default agent"
+            )
             svc.selected_agent = None
+
+
+def _build_agents_context() -> str:
+    """Return a system-message snippet listing all available custom agents.
+
+    Returns "" if no agents are installed so nothing is appended.
+    """
+    agents = get_available_agents()
+    if not agents:
+        return ""
+    lines = ["Available custom agents (user installs via /agent command):"]
+    for a in agents:
+        desc = f" — {a['description']}" if a["description"] else ""
+        lines.append(f"- {a['key']}: {a['name']}{desc}")
+    lines.append(
+        "When the user asks to use one of these agents, invoke the task tool "
+        "with agent_type set to the agent key even if it is not in the built-in "
+        "enum — the runtime will resolve it."
+    )
+    return "\n".join(lines)
 
 
 def _load_instructions(cwd: str | None) -> str:
@@ -77,7 +116,7 @@ def _load_instructions(cwd: str | None) -> str:
     """
     proj_path = project_instructions_path(cwd)
     candidates = [
-        ("User instructions",  USER_INSTRUCTIONS_PATH, Path.home()),
+        ("User instructions", USER_INSTRUCTIONS_PATH, Path.home()),
         ("Project instructions", proj_path, proj_path.parent if proj_path else None),
     ]
     parts: list[str] = []
@@ -177,18 +216,28 @@ class SessionMixin:
         await self._create_session()
 
     async def change_model(self, model: str, reasoning_effort: str = None):
-        """Change the model by resetting the session (conversation history will be lost).
+        """Switch model, preserving conversation history when possible.
 
-        Note: Session resume with model change causes duplicate events in SDK v0.1.23.
-        See: https://github.com/julianchun/copilot-cli-telegram-bot/issues/2
+        Uses session.set_model() for model-only switches (no reasoning_effort
+        change) so history is kept. When reasoning_effort changes, a session
+        reset is required because the SDK applies it only at session creation.
+        Falls back to reset_session() if set_model() fails or no session exists.
         """
+        effort_changed = reasoning_effort != self.current_reasoning_effort
         self.current_reasoning_effort = reasoning_effort
-
         self.current_model = model
         self.user_selected_model = model
-        logger.info(f"🔄 Changing model to {model} (will reset session)")
         self.save_prefs()
 
+        if self.session and not effort_changed:
+            try:
+                logger.info(f"🔄 Switching model to {model} (preserving history)")
+                await self.session.set_model(model)
+                return
+            except Exception as e:
+                logger.warning(f"set_model() failed ({e}), falling back to reset")
+
+        logger.info(f"🔄 Switching model to {model} (session reset)")
         await self.reset_session(model)
 
     async def populate_session_metadata(self):
@@ -200,16 +249,24 @@ class SessionMixin:
         try:
             sessions = await self.client.list_sessions()
             meta = next(
-                (s for s in sessions if getattr(s, 'sessionId', None) == self.session_info.session_id),
+                (
+                    s
+                    for s in sessions
+                    if getattr(s, "sessionId", None) == self.session_info.session_id
+                ),
                 None,
             )
             if meta:
-                self.session_info.name = getattr(meta, 'summary', None)
-                self.session_info.created = getattr(meta, 'startTime', None)
-                self.session_info.modified = getattr(meta, 'modifiedTime', None)
-                logger.info(f"📊 Session metadata fetched - Name: {self.session_info.name}, Created: {self.session_info.created}")
+                self.session_info.name = getattr(meta, "summary", None)
+                self.session_info.created = getattr(meta, "startTime", None)
+                self.session_info.modified = getattr(meta, "modifiedTime", None)
+                logger.info(
+                    f"📊 Session metadata fetched - Name: {self.session_info.name}, Created: {self.session_info.created}"
+                )
             else:
-                logger.warning(f"Session {self.session_info.session_id} not found in list_sessions()")
+                logger.warning(
+                    f"Session {self.session_info.session_id} not found in list_sessions()"
+                )
         except Exception as e:
             logger.warning(f"Failed to fetch session metadata: {e}")
 
@@ -360,7 +417,10 @@ class SessionMixin:
         }
         if self.extra_dirs:
             # Sanitize: strip newlines/control chars from paths before injecting into system prompt
-            safe_dirs = [d.replace("\n", " ").replace("\r", " ").replace("\x00", "") for d in self.extra_dirs]
+            safe_dirs = [
+                d.replace("\n", " ").replace("\r", " ").replace("\x00", "")
+                for d in self.extra_dirs
+            ]
             extra = "\n".join(f"- {d}" for d in safe_dirs)
             session_config["system_message"]["content"] += (
                 f"\n\nYou also have access to these additional directories:\n{extra}"
@@ -370,6 +430,11 @@ class SessionMixin:
         if instructions:
             session_config["system_message"]["content"] += f"\n\n{instructions}"
             logger.info("Copilot instructions injected into system message")
+
+        agents_ctx = _build_agents_context()
+        if agents_ctx:
+            session_config["system_message"]["content"] += f"\n\n{agents_ctx}"
+            logger.info("Custom agents list injected into system message")
         if self.current_reasoning_effort:
             session_config["reasoning_effort"] = self.current_reasoning_effort
         if self.infinite_sessions_enabled:
@@ -416,6 +481,7 @@ class SessionMixin:
 
     def _extract_session_start_context(self):
         """Capture session context from session.start event via get_messages()."""
+
         # Note: SESSION_START event doesn't fire reliably, so we query messages.
         # This is called synchronously after session creation — we schedule the
         # async work as a task.
@@ -425,25 +491,42 @@ class SessionMixin:
                 if messages and len(messages) > 0:
                     first_event = messages[0]
                     if first_event.type.value == "session.start":
-                        self.session_info.session_id = getattr(first_event.data, 'session_id', None)
-                        self.session_info.selected_model = getattr(first_event.data, 'selected_model', None)
-                        self.session_info.copilot_version = getattr(first_event.data, 'copilot_version', None)
-                        self.session_info.producer = getattr(first_event.data, 'producer', None)
+                        self.session_info.session_id = getattr(
+                            first_event.data, "session_id", None
+                        )
+                        self.session_info.selected_model = getattr(
+                            first_event.data, "selected_model", None
+                        )
+                        self.session_info.copilot_version = getattr(
+                            first_event.data, "copilot_version", None
+                        )
+                        self.session_info.producer = getattr(
+                            first_event.data, "producer", None
+                        )
 
-                        if hasattr(first_event.data, 'context'):
+                        if hasattr(first_event.data, "context"):
                             context = first_event.data.context
                             if context and not isinstance(context, str):
-                                self.session_info.cwd = getattr(context, 'cwd', None)
-                                self.session_info.branch = getattr(context, 'branch', None)
-                                self.session_info.git_root = getattr(context, 'git_root', None)
-                                self.session_info.repository = getattr(context, 'repository', None)
+                                self.session_info.cwd = getattr(context, "cwd", None)
+                                self.session_info.branch = getattr(
+                                    context, "branch", None
+                                )
+                                self.session_info.git_root = getattr(
+                                    context, "git_root", None
+                                )
+                                self.session_info.repository = getattr(
+                                    context, "repository", None
+                                )
                                 logger.info(
                                     f"📍 Session context captured from session.start - "
                                     f"CWD: {self.session_info.cwd}, Branch: {self.session_info.branch}, "
                                     f"Git Root: {self.session_info.git_root}"
                                 )
 
-                        if self.session_info.selected_model and not self.user_selected_model:
+                        if (
+                            self.session_info.selected_model
+                            and not self.user_selected_model
+                        ):
                             self.current_model = self.session_info.selected_model
                             logger.info(f"🤖 SDK selected model: {self.current_model}")
             except Exception as e:
@@ -465,8 +548,8 @@ class SessionMixin:
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
-        tool_name = input_data.get('toolName', 'unknown')
-        tool_args = input_data.get('toolArgs', {})
+        tool_name = input_data.get("toolName", "unknown")
+        tool_args = input_data.get("toolArgs", {})
 
         # Auto-approve when allow_all_tools is enabled
         if self.allow_all_tools:
@@ -482,7 +565,9 @@ class SessionMixin:
         # Deny-by-default is safe here: interaction_callback is only None outside
         # of an active chat() call, when no tool execution should be happening.
         if not self.interaction_callback:
-            logger.warning(f"🔴 No interaction_callback registered — denying tool: {tool_name}")
+            logger.warning(
+                f"🔴 No interaction_callback registered — denying tool: {tool_name}"
+            )
             return {"permissionDecision": "deny"}
 
         try:
@@ -495,7 +580,9 @@ class SessionMixin:
             )
 
             decision = "allow" if result else "deny"
-            logger.info(f"{'✅' if decision == 'allow' else '❌'} User {decision}ed tool: {tool_name}")
+            logger.info(
+                f"{'✅' if decision == 'allow' else '❌'} User {decision}ed tool: {tool_name}"
+            )
             return {"permissionDecision": decision}
 
         except asyncio.TimeoutError:
@@ -522,7 +609,9 @@ class SessionMixin:
             branch = stdout.decode().strip()
             if branch:
                 if branch != self.session_info.branch:
-                    logger.info(f"🔀 Git branch updated: {self.session_info.branch} → {branch}")
+                    logger.info(
+                        f"🔀 Git branch updated: {self.session_info.branch} → {branch}"
+                    )
                 self.session_info.branch = branch
         except asyncio.TimeoutError:
             logger.warning("⏱️ Git info refresh timed out (3s)")
@@ -546,16 +635,19 @@ class SessionMixin:
                 return {"answer": "", "wasFreeform": False}
 
             from src.core.service import _RequestWrapper
+
             wrapped = _RequestWrapper(request)
 
-            logger.info(f"⏳ Calling interaction_callback with {INTERACTION_TIMEOUT}s timeout...")
+            logger.info(
+                f"⏳ Calling interaction_callback with {INTERACTION_TIMEOUT}s timeout..."
+            )
             result = await asyncio.wait_for(
                 self.interaction_callback("input", wrapped),
                 timeout=INTERACTION_TIMEOUT,
             )
             logger.info(f"✅ interaction_callback returned: {result}")
 
-            was_cancel = (result == "cancel" or not result)
+            was_cancel = result == "cancel" or not result
             was_freeform = allow_freeform and (not choices or result not in choices)
 
             response = {

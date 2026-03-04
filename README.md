@@ -54,7 +54,7 @@ Don't just tell Copilot about the bug—**show it**.
 
 ### 🛡️ Security & Control (Human-in-the-Loop)
 - **Workspace Confinement:** Server-side enforcement of workspace paths. All file access restricted to `WORKSPACE_ROOT` + optional `GRANTED_PROJECTS` paths.
-- **Two-Tier Permission Model:** Safe, read-only tools (`list_files`, `read_file`, `view`, `glob`, etc.) are **auto-approved** for seamless flow. Dangerous tools (`bash`, `edit`, `create`) require **explicit user approval** via inline buttons.
+- **Two-Tier Permission Model:** Safe, read-only tools (`list_files`, `workspace_read_file`, `view`, `glob`, etc.) are **auto-approved** for seamless flow. Dangerous tools (`bash`, `edit`, `create`) require **explicit user approval** via inline buttons.
 - **Transparent Tool Use:** Every tool invocation is displayed to you—auto-approved ones show inline, while dangerous ones pause and wait for your tap.
 - **Chat Lock:** Prevents concurrent requests from interfering with each other.
 - **Zero Database:** Lightweight, portable sessions stored in-memory—no persistence layer required.
@@ -196,7 +196,7 @@ This bot is built on top of the **`github-copilot-sdk`**, which manages a `Copil
 The bot uses a **two-tier permission model**:
 
 **Auto-approved tools** (seamless, no interruption):
-`list_files`, `read_file`, `view`, `glob`, `report_intent`, `task`, `update_todo`, `ask_user`, `fetch_copilot_cli_documentation`
+`list_files`, `workspace_read_file`, `view`, `glob`, `report_intent`, `task`, `update_todo`, `ask_user`, `fetch_copilot_cli_documentation`
 
 **Requires explicit approval** (inline keyboard prompt):
 `bash`, `edit`, `create`, and any other tool not in the allowlist.
@@ -218,7 +218,7 @@ Safe, read-only operations proceed automatically so you're not tapping "Allow" o
 **Permission Dialog Examples:**
 - **Shell Command**: "🛡️ Permission request: **bash** with: `npm install` — Allow?"
 - **File Write**: "🛡️ Permission request: **edit** with: `['src/app.ts']` — Allow?"
-- **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning effort picker (for supported models) → session restarts
+- **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning effort picker (for supported models) → switches instantly, history preserved
 - **Agent Questions**: "❓ **Copilot Asks:** What's your preferred testing framework? [Jest] [Vitest] [Cancel]"
 
 This keeps you **in the loop** on critical actions while maintaining a smooth flow for safe operations.
@@ -235,7 +235,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
   - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
-  - **[tools.py](src/core/tools.py)**: Read-only MCP tools (`list_files`, `read_file`) with strict path validation.
+  - **[tools.py](src/core/tools.py)**: Read-only MCP tools (`list_files`, `workspace_read_file`) with strict path validation.
   - **[git.py](src/core/git.py)**: Branch detection and dirty-tree status for HUD footers.
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 

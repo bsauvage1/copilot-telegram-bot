@@ -1,7 +1,8 @@
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from src.config import WORKSPACE_PATH, GRANTED_PROJECT_PATHS
+from src.config import GRANTED_PROJECT_PATHS
 
 
 def _read_session_cwd(session_id: str) -> Optional[str]:
@@ -16,6 +17,47 @@ def _read_session_cwd(session_id: str) -> Optional[str]:
             stripped = line.strip()
             if stripped.startswith("cwd:"):
                 return stripped[4:].strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _write_session_summary(session_id: str, summary: str) -> None:
+    """Write a clean summary to workspace.yaml, replacing any existing one.
+
+    Handles both single-line ``summary: text`` and block scalar
+    ``summary: |-\\n  ...`` formats without requiring PyYAML.
+    """
+    if not session_id or not summary:
+        return
+    workspace = (
+        Path.home() / ".copilot" / "session-state" / session_id / "workspace.yaml"
+    )
+    try:
+        text = workspace.read_text()
+        clean = summary.replace("\n", " ")[:80].strip()
+        # Replace single-line OR block-scalar summary field
+        new_text = re.sub(
+            r"^summary:[ \t]*\|-\n(?:[ \t]+[^\n]*\n)*|^summary:[ \t]*[^\n]*\n?",
+            f"summary: {clean}\n",
+            text,
+            flags=re.MULTILINE,
+        )
+        workspace.write_text(new_text)
+    except Exception:
+        pass
+
+
+def _read_plan_summary(session_id: str) -> Optional[str]:
+    """Return the first heading from plan.md as a fallback session summary."""
+    if not session_id:
+        return None
+    plan = Path.home() / ".copilot" / "session-state" / session_id / "plan.md"
+    try:
+        for line in plan.read_text().splitlines():
+            title = line.lstrip("#").strip()
+            if title:
+                return title[:60]
     except Exception:
         pass
     return None
@@ -77,13 +119,17 @@ _NOISE_PREFIXES = (
 
 
 def _clean_summary(raw: str | None) -> str:
-    """Return a display-friendly session summary, stripping system prompt noise."""
+    """Return a display-friendly session summary, stripping system prompt noise.
+
+    Returns "" (falsy) when the summary is absent or matches a known noise
+    prefix so callers can fall back to a "no summary" message.
+    """
     if not raw:
-        return "No summary"
+        return ""
     stripped = raw.strip()
     for prefix in _NOISE_PREFIXES:
         if stripped.startswith(prefix):
-            return "—"
+            return ""
     return stripped[:38]
 
 
@@ -105,12 +151,15 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
 
     def _make_btn(s, session_id, icon=""):
         summary = _clean_summary(getattr(s, "summary", None))
+        if not summary:
+            summary = _read_plan_summary(session_id) or ""
         start_time = getattr(s, "startTime", None) or ""
         date_str = start_time[:10]
         time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id
         prefix = f"{icon} " if icon else ""
-        label = f"{prefix}{date_str} {time_str} [{short_id}]  {summary}"
+        summary_part = f"  {summary}" if summary else ""
+        label = f"{prefix}{date_str} {time_str} [{short_id}]{summary_part}"
         return InlineKeyboardButton(label, callback_data=f"session:{session_id}")
 
     if cwd_filter:
