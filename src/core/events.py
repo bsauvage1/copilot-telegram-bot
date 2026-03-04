@@ -88,7 +88,16 @@ class EventHandlerMixin:
             if parent_tool_call_id:
                 return
 
-            msg = format_tool_start(tool_name, args or {})
+            # Only surface write-type tools + intent reporting; suppress
+            # read-only exploration tools (grep, view, glob, sql, etc.)
+            _VISIBLE_TOOLS = {
+                "bash", "create", "edit", "task", "ask_user",
+                "report_intent", "update_todo", "show_file",
+            }
+            if tool_name not in _VISIBLE_TOOLS:
+                return
+
+            msg = format_tool_start(tool_name, args or {}).split("\n")[0]
 
             if ctx.status_callback:
                 self._dispatch_async(ctx.status_callback, msg)
@@ -124,6 +133,13 @@ class EventHandlerMixin:
                 body = result_content[:max_content] + ("\n… (truncated)" if len(result_content) > max_content else "")
                 formatted = f"{caption}```{ext}\n{body}\n```"
                 self._dispatch_async(self.current_callback, formatted)
+                return
+
+            _VISIBLE_TOOLS = {
+                "bash", "create", "edit", "task", "ask_user",
+                "report_intent", "update_todo", "show_file",
+            }
+            if tool_name not in _VISIBLE_TOOLS:
                 return
 
             max_len = None if streaming_mode_var.get() else 100
