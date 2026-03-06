@@ -76,7 +76,10 @@ def cleanup_pending_interactions():
 
 
 async def chat_handler(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str = None
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    override_text: str = None,
+    _retry: bool = False,
 ):
     if not await security_check(update):
         return
@@ -336,9 +339,20 @@ async def chat_handler(
             try:
                 service.session_expired = True
                 await service.set_working_directory(service.get_working_directory())
-                await update.message.reply_text(
-                    "⚠️ Session was lost (sleep/wake?). Auto-recovered — please resend your message."
-                )
+                service.session_expired = False  # clear before retry
+                if not _retry:
+                    logger.info("🔄 Auto-retrying after session recovery...")
+                    await chat_handler(
+                        update,
+                        context,
+                        override_text=original_user_text,
+                        _retry=True,
+                    )
+                    return
+                else:
+                    await update.message.reply_text(
+                        "⚠️ Session recovered but retry also failed — please resend."
+                    )
             except Exception as recovery_err:
                 logger.error(f"Recovery failed: {recovery_err}")
                 await update.message.reply_text(

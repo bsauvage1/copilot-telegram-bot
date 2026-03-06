@@ -54,5 +54,5 @@ CHAT_TIMEOUT = 600                 # seconds — overall timeout for a single ch
 MAX_TRACKED_FILES = 200            # max files tracked in SessionContext before pruning
 TRACKED_FILES_PRUNE_SIZE = 100     # keep last N files when pruning
 FILE_CONTENT_LIMIT = 100_000       # max characters when reading file content
-TELEGRAM_MSG_LIMIT = 4000          # safe margin below Telegram's 4096 char limit
+TELEGRAM_MSG_LIMIT = 3500          # safe margin below Telegram's 4096 char limit
 PERMISSION_TIMEOUT = 60.0          # seconds — timeout for tool permission requests

@@ -169,8 +169,8 @@ class MessageSender:
         finally:
             self._working_msg = None
 
-    # Max chars to show in a live streaming edit (leave headroom for escape overhead + cursor)
-    _STREAM_PREVIEW_LIMIT = 3800
+    # Max chars to show in a live streaming edit (leave headroom for HTML escape overhead)
+    _STREAM_PREVIEW_LIMIT = 3200
 
     async def stream_delta(self, chunk: str):
         """Accumulate streaming delta and edit Telegram message at most once per second.
@@ -235,9 +235,20 @@ class MessageSender:
                     self._stream_msg.edit_text(safe, parse_mode=ParseMode.HTML),
                     timeout=10.0,
                 )
+                self._stream_last_edit = _time_mod.monotonic()
+            except RetryAfter as e:
+                # Advance the debounce clock by the full mandatory backoff so that
+                # subsequent deltas don't immediately retry and hammer the endpoint.
+                logger.debug(f"Stream edit rate-limited ({e.retry_after}s)")
+                self._stream_last_edit = (
+                    _time_mod.monotonic() + e.retry_after - self._STREAM_DEBOUNCE
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    logger.debug(f"Stream edit failed: {e}")
+                self._stream_last_edit = _time_mod.monotonic()
             except Exception as e:
                 logger.debug(f"Stream edit failed: {e}")
-            finally:
                 self._stream_last_edit = _time_mod.monotonic()
 
     async def finalize_stream(self, footer: str = ""):
@@ -260,14 +271,12 @@ class MessageSender:
         # Finalize the Working card: replace with the tool-event log
         await self._finalize_working_card()
 
-        # Delete the live streaming message (it was just a preview)
-        if msg:
-            try:
-                await asyncio.wait_for(msg.delete(), timeout=2.0)
-            except Exception:
-                pass
-
         if not text or not text.strip():
+            if msg:
+                try:
+                    await asyncio.wait_for(msg.delete(), timeout=2.0)
+                except Exception:
+                    pass
             return
 
         if footer:
@@ -279,9 +288,29 @@ class MessageSender:
         if not chunks:
             chunks = ["_(empty response)_"]
 
-        # Send all chunks as new messages below the Working card
+        # For single-chunk responses, edit the live card in place — avoids the
+        # "card disappears then reappears" flash that delete+resend causes.
+        if msg and len(chunks) == 1:
+            try:
+                safe = html_lib.escape(chunks[0])
+                await asyncio.wait_for(
+                    msg.edit_text(safe, parse_mode=ParseMode.HTML),
+                    timeout=10.0,
+                )
+                return
+            except Exception:
+                pass  # Fall through to delete + resend
+
+        # Multi-chunk or edit failed: delete the preview and send as new messages
+        if msg:
+            try:
+                await asyncio.wait_for(msg.delete(), timeout=2.0)
+            except Exception:
+                pass
+
         for chunk in chunks:
-            await self._safe_send(self._ensure_safe_markdown(chunk))
+            safe = html_lib.escape(chunk)
+            await self._safe_send_html(safe)
 
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.
@@ -392,15 +421,17 @@ class MessageSender:
                 message.edit_text(text, parse_mode=ParseMode.MARKDOWN),
                 timeout=10.0,
             )
+            return
         except RetryAfter as e:
             if _retry_count >= 3:
                 logger.warning("⏱️ edit_message max retries reached — skipping")
                 return
             await asyncio.sleep(e.retry_after)
             await self._edit_message(message, text, _retry_count + 1)
+            return  # don't fall through to plain-text fallback after a successful retry
         except BadRequest as e:
             if "Message is not modified" in str(e):
-                pass
+                return  # not an error — message already has this content
             elif "Can't parse entities" in str(e):
                 try:
                     await asyncio.wait_for(
@@ -417,11 +448,21 @@ class MessageSender:
             logger.warning("⏱️ edit_message timeout — skipping")
         except Exception as e:
             logger.error(f"❌ edit_message error: {e}")
+        # Last-resort: plain text edit
+        try:
+            await asyncio.wait_for(
+                message.edit_text(text),
+                timeout=10.0,
+            )
+        except Exception as e:
+            logger.error(f"❌ edit_message plain-text fallback failed: {e}")
 
     async def _safe_send(self, text: str, _retry_count: int = 0) -> Message | None:
         """Core send logic with retry, markdown fallback, and error handling.
 
         Returns the sent Message (or None on failure / fire-and-forget).
+        Plain-text fallback only fires on definite API errors, not timeouts,
+        to avoid duplicate messages when the original send may have succeeded.
         """
         try:
             return await asyncio.wait_for(
@@ -436,21 +477,55 @@ class MessageSender:
             return await self._safe_send(text, _retry_count + 1)
         except BadRequest as e:
             if "Can't parse entities" in str(e):
+                # Plain-text fallback for parse failures (definite API rejection)
                 try:
                     return await asyncio.wait_for(
-                        self.chat.send_message(
-                            html_lib.escape(text), parse_mode=ParseMode.HTML
-                        ),
+                        self.chat.send_message(text),
                         timeout=10.0,
                     )
                 except Exception:
-                    logger.warning("Failed to send message even as plain text")
+                    logger.warning("Failed to send message as plain text")
             else:
                 logger.error(f"❌ send_message failed: {e}")
         except asyncio.TimeoutError:
+            # Don't fall back — message may have been delivered; avoid duplicates
             logger.warning("⏱️ send_message timeout — skipping")
+            return None
         except Exception as e:
             logger.error(f"❌ send_message error: {e}")
+            # Plain-text fallback for definite local errors only
+            try:
+                return await asyncio.wait_for(
+                    self.chat.send_message(text),
+                    timeout=10.0,
+                )
+            except Exception as fe:
+                logger.error(f"❌ send_message plain-text fallback failed: {fe}")
+        return None
+
+    async def _safe_send_html(self, html_text: str) -> Message | None:
+        """Send a pre-escaped HTML message, with plain-text fallback on parse error."""
+        try:
+            return await asyncio.wait_for(
+                self.chat.send_message(html_text, parse_mode=ParseMode.HTML),
+                timeout=10.0,
+            )
+        except RetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            return await self._safe_send_html(html_text)
+        except BadRequest as e:
+            logger.warning(f"HTML send failed ({e}), falling back to plain text")
+            try:
+                return await asyncio.wait_for(
+                    self.chat.send_message(html_text),
+                    timeout=10.0,
+                )
+            except Exception as fe:
+                logger.error(f"❌ _safe_send_html plain-text fallback failed: {fe}")
+        except asyncio.TimeoutError:
+            logger.warning("⏱️ _safe_send_html timeout — skipping")
+        except Exception as e:
+            logger.error(f"❌ _safe_send_html error: {e}")
         return None
 
     async def _send_message(self, text: str, _retry_count: int = 0):
