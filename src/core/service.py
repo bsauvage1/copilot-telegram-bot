@@ -66,17 +66,14 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     def __init__(self):
         # Initialize context root
         ctx.set_root(WORKSPACE_PATH)
-
-        config: Dict[str, Any] = {"cwd": str(ctx.root_path)}
-        if GITHUB_TOKEN:
-            config["github_token"] = GITHUB_TOKEN
-        system_cli = shutil.which("copilot") or os.path.expanduser(
-            "~/.local/bin/copilot"
-        )
-        if os.path.isfile(system_cli):
-            config["cli_path"] = system_cli
-            logger.info(f"🔧 Using system Copilot CLI: {system_cli}")
-        self.client = CopilotClient(config)
+        self._system_cli_path: Optional[str] = None
+        self._bundled_cli_path: Optional[str] = None
+        self._active_cli_path: Optional[str] = None
+        self._active_cli_source: str = "unknown"
+        self._cli_fallback_reason: Optional[str] = None
+        self._pending_runtime_warning: Optional[str] = None
+        self._prefer_cli_default_model: bool = False
+        self.client = self._create_client(ctx.root_path)
 
         self.session = None  # type: ignore[assignment]
         self.session_id: str = str(uuid.uuid4())[:8]
@@ -168,16 +165,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
             ctx.set_root(p)
             self.session_info = SessionInfo()
+            self._models_cache = []
 
-            config: Dict[str, Any] = {"cwd": str(p)}
-            if GITHUB_TOKEN:
-                config["github_token"] = GITHUB_TOKEN
-            system_cli = shutil.which("copilot") or os.path.expanduser(
-                "~/.local/bin/copilot"
-            )
-            if os.path.isfile(system_cli):
-                config["cli_path"] = system_cli
-            self.client = CopilotClient(config)
+            self.client = self._create_client(p)
             logger.info(f"🔄 CopilotClient re-initialized with CWD: {p}")
 
             logger.info("Starting Copilot Client with new CWD...")
@@ -190,6 +180,87 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.extra_dirs = []  # dirs are project-scoped; clear on project switch
         logger.info(f"Workspace change complete: {current_root} -> {ctx.root_path}")
         return str(ctx.root_path)
+
+    def _build_client_config(
+        self, cwd: Path, cli_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Build CopilotClient config for a given cwd and optional CLI path."""
+        config: Dict[str, Any] = {"cwd": str(cwd)}
+        if GITHUB_TOKEN:
+            config["github_token"] = GITHUB_TOKEN
+        if cli_path:
+            config["cli_path"] = cli_path
+        return config
+
+    def _discover_system_cli_path(self) -> Optional[str]:
+        """Return the installed Copilot CLI path if available."""
+        candidates = (
+            shutil.which("copilot"),
+            os.path.expanduser("~/.local/bin/copilot"),
+        )
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def _discover_bundled_cli_path(self) -> Optional[str]:
+        """Return the SDK-bundled Copilot CLI path if available."""
+        try:
+            from copilot.client import _get_bundled_cli_path
+
+            bundled_cli = _get_bundled_cli_path()
+        except Exception as e:
+            logger.debug(f"Could not resolve bundled CLI path: {e}")
+            return None
+
+        if bundled_cli and os.path.isfile(bundled_cli):
+            return bundled_cli
+        return None
+
+    def _create_client(self, cwd: Path) -> CopilotClient:
+        """Create a client preferring the installed CLI before bundled fallback."""
+        self._system_cli_path = self._discover_system_cli_path()
+        self._bundled_cli_path = self._discover_bundled_cli_path()
+        self._cli_fallback_reason = None
+
+        if self._system_cli_path:
+            self._active_cli_path = self._system_cli_path
+            self._active_cli_source = "system"
+            logger.info(f"🔧 Preferring system Copilot CLI: {self._system_cli_path}")
+            return CopilotClient(
+                self._build_client_config(cwd, cli_path=self._system_cli_path)
+            )
+
+        self._active_cli_path = self._bundled_cli_path
+        self._active_cli_source = "bundled" if self._bundled_cli_path else "unknown"
+        if self._bundled_cli_path:
+            logger.info(f"📦 Using bundled Copilot CLI: {self._bundled_cli_path}")
+        return CopilotClient(self._build_client_config(cwd))
+
+    def should_fallback_to_bundled_cli(self, error: Exception) -> bool:
+        """Return True when the system CLI should be replaced with bundled CLI."""
+        return (
+            isinstance(error, RuntimeError)
+            and "protocol version mismatch" in str(error).lower()
+            and self._active_cli_source == "system"
+            and bool(self._bundled_cli_path)
+        )
+
+    def activate_bundled_cli_fallback(self, reason: str) -> bool:
+        """Switch the active client to the bundled CLI."""
+        if not self._bundled_cli_path:
+            self._bundled_cli_path = self._discover_bundled_cli_path()
+        if not self._bundled_cli_path:
+            return False
+
+        self._active_cli_path = self._bundled_cli_path
+        self._active_cli_source = "bundled"
+        self._cli_fallback_reason = reason
+        self.client = CopilotClient(
+            self._build_client_config(ctx.root_path, cli_path=self._bundled_cli_path)
+        )
+        logger.info(f"📦 Falling back to bundled Copilot CLI: {self._bundled_cli_path}")
+        return True
 
     def get_working_directory(self) -> str:
         return str(ctx.root_path)
@@ -253,6 +324,141 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     async def get_usage_report(self) -> str:
         """Returns formatted usage stats from the accumulated SessionUsageTracker."""
         return await self.usage_tracker.get_usage_summary()
+
+    async def _get_cli_version_for_path(self, cli_path: Optional[str]) -> str:
+        """Get a CLI version from a specific executable path."""
+        if not cli_path or not os.path.isfile(cli_path):
+            return "not found"
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                cli_path,
+                "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            match = re.search(r"(\d+\.\d+\.\d+)", stdout.decode())
+            if match:
+                return match.group(1)
+        except Exception as e:
+            logger.debug(f"CLI --version failed ({cli_path}): {e}")
+
+        return "unknown"
+
+    def _get_bundled_cli_version_for_path(self, cli_path: Optional[str]) -> str:
+        """Read the SDK-bundled CLI version from its adjacent VERSION file."""
+        if not cli_path:
+            return "unknown"
+        version_file = Path(cli_path).with_name("VERSION")
+        if not version_file.is_file():
+            return "unknown"
+        try:
+            version = version_file.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.debug(f"Could not read bundled CLI VERSION file: {e}")
+            return "unknown"
+        return version or "unknown"
+
+    async def _get_active_cli_version(
+        self, cli_path: Optional[str], active_source: str
+    ) -> str:
+        """Get the version of the CLI actually in use."""
+        if (
+            self._is_running
+            and cli_path
+            and cli_path == self._active_cli_path
+        ):
+            try:
+                status = await self.client.get_status()
+                if hasattr(status, "version") and status.version:
+                    return str(status.version)
+            except Exception as e:
+                logger.debug(f"SDK get_status() failed: {e}")
+
+        if active_source == "bundled":
+            bundled_version = self._get_bundled_cli_version_for_path(cli_path)
+            if bundled_version != "unknown":
+                return bundled_version
+
+        return await self._get_cli_version_for_path(cli_path)
+
+    async def _probe_cli_compatibility(
+        self, cli_path: str, cwd: Optional[Path] = None
+    ) -> tuple[bool, Optional[str]]:
+        """Check whether a CLI binary can complete the SDK startup handshake."""
+        probe_client = CopilotClient(
+            self._build_client_config(cwd or ctx.root_path, cli_path=cli_path)
+        )
+        started = False
+        try:
+            await probe_client.start()
+            started = True
+            return True, None
+        except RuntimeError as e:
+            if "protocol version mismatch" in str(e).lower():
+                return False, str(e)
+            raise
+        finally:
+            try:
+                if started:
+                    await probe_client.stop()
+            except Exception as e:
+                logger.debug(f"CLI compatibility probe cleanup failed: {e}")
+
+    async def get_cli_runtime_info(
+        self, probe: bool = False
+    ) -> Dict[str, Optional[str]]:
+        """Return installed and active CLI metadata for runtime diagnostics."""
+        installed_path = self._system_cli_path or self._discover_system_cli_path()
+        bundled_path = self._bundled_cli_path or self._discover_bundled_cli_path()
+        active_path = self._active_cli_path
+        active_source = self._active_cli_source
+        fallback_reason = self._cli_fallback_reason
+
+        if probe and not self._is_running and installed_path and bundled_path:
+            is_compatible, probe_reason = await self._probe_cli_compatibility(
+                installed_path
+            )
+            if is_compatible:
+                active_path = installed_path
+                active_source = "system"
+                fallback_reason = None
+            else:
+                active_path = bundled_path
+                active_source = "bundled"
+                fallback_reason = probe_reason
+            self._active_cli_path = active_path
+            self._active_cli_source = active_source
+            self._cli_fallback_reason = fallback_reason
+
+        installed_version = await self._get_cli_version_for_path(installed_path)
+        active_version = await self._get_active_cli_version(active_path, active_source)
+
+        return {
+            "installed_path": installed_path,
+            "installed_version": installed_version,
+            "active_path": active_path,
+            "active_version": active_version,
+            "active_source": active_source,
+            "fallback_reason": fallback_reason,
+        }
+
+    def pop_pending_runtime_warning(self) -> Optional[str]:
+        """Return and clear the next runtime warning intended for the user."""
+        warning = self._pending_runtime_warning
+        self._pending_runtime_warning = None
+        return warning
+
+    def get_display_model(self) -> str:
+        """Return the best user-facing model label for cockpit/status views."""
+        if self.user_selected_model:
+            return self.user_selected_model
+        if self.current_model:
+            return self.current_model
+        if self._prefer_cli_default_model:
+            return "CLI default"
+        return "Auto"
 
     async def set_agent_mode(self, mode: str) -> bool:
         """Set desired agent mode. self.agent_mode is always updated (optimistic local cache)
@@ -325,41 +531,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     # ── CLI / auth helpers ────────────────────────────────────────────
 
     async def get_cli_version(self) -> str:
-        """Get Copilot CLI version from the configured binary, with SDK fallback."""
-        client_options = getattr(self.client, "options", None)
-        configured_cli = (
-            client_options.get("cli_path")
-            if isinstance(client_options, dict)
-            else getattr(client_options, "cli_path", None)
-        )
-        discovered_cli = shutil.which("copilot") or os.path.expanduser(
-            "~/.local/bin/copilot"
-        )
-        cli_candidates = [c for c in (configured_cli, discovered_cli) if c]
-
-        for cli_candidate in cli_candidates:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    cli_candidate,
-                    "--version",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await proc.communicate()
-                match = re.search(r"(\d+\.\d+\.\d+)", stdout.decode())
-                if match:
-                    return match.group(1)
-            except Exception as e:
-                logger.debug(f"CLI --version failed ({cli_candidate}): {e}")
-
-        try:
-            status = await self.client.get_status()
-            if hasattr(status, "version") and status.version:
-                return status.version
-        except Exception as e:
-            logger.debug(f"SDK get_status() failed: {e}")
-
-        return "unknown"
+        """Get the version of the CLI currently selected for runtime use."""
+        runtime = await self.get_cli_runtime_info()
+        return runtime["active_version"] or "unknown"
 
     async def get_auth_status(self) -> str:
         if not self._is_running:
@@ -469,7 +643,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self, context_user_data: Optional[dict] = None
     ) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
-        model = self.user_selected_model or self.current_model or "Auto"
+        model = self.get_display_model()
         mode = (
             "Plan"
             if (context_user_data and context_user_data.get("plan_mode"))
@@ -497,7 +671,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         from src.core.mcp_config import get_enabled_servers, load_config
         from src.core.skills_config import scan_skills, get_disabled_skills
 
-        model = self.user_selected_model or self.current_model or "Auto"
+        model = self.get_display_model()
         # Use persisted agent_mode as source of truth; sync context flag for footer display
         mode_map = {"plan": "Plan", "autopilot": "Autopilot"}
         mode = mode_map.get(self.agent_mode, "Chat")

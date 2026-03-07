@@ -33,6 +33,15 @@ from src.core.instructions import (
 logger = logging.getLogger(__name__)
 
 
+def _is_reasoning_unsupported_error(error: Exception) -> bool:
+    """Return True when the CLI rejects reasoning_effort for the selected model."""
+    message = str(error).lower()
+    return (
+        "does not support reasoning effort" in message
+        or "does not support reasoning_effort" in message
+    )
+
+
 # ── Tool allowlist (auto-approved without asking user) ────────────────
 
 _TOOL_ALLOWLIST = frozenset(
@@ -169,17 +178,37 @@ class SessionMixin:
             logger.info("Starting Copilot Client...")
             try:
                 await self.client.start()
-                self._is_running = True
-                logger.info("Copilot Client Started.")
-                # Prime the built-in agent key cache once so concurrent cockpit
-                # requests never race to populate it.
+            except RuntimeError as e:
+                if not self.should_fallback_to_bundled_cli(e):
+                    logger.error(f"Failed to start client: {e}")
+                    raise
+
+                logger.warning(
+                    "System Copilot CLI failed protocol handshake; "
+                    "retrying with bundled CLI."
+                )
                 try:
-                    await get_builtin_agent_keys(self.client)
-                except Exception as e:
-                    logger.warning(f"Could not prime builtin agent cache: {e}")
+                    await self.client.stop()
+                except Exception as stop_error:
+                    logger.debug(
+                        f"Ignoring stop error after failed client start: {stop_error}"
+                    )
+
+                if not self.activate_bundled_cli_fallback(str(e)):
+                    logger.error(f"Failed to start client: {e}")
+                    raise
+                await self.client.start()
             except Exception as e:
                 logger.error(f"Failed to start client: {e}")
-                raise e
+                raise
+            self._is_running = True
+            logger.info("Copilot Client Started.")
+            # Prime the built-in agent key cache once so concurrent cockpit
+            # requests never race to populate it.
+            try:
+                await get_builtin_agent_keys(self.client)
+            except Exception as e:
+                logger.warning(f"Could not prime builtin agent cache: {e}")
         if not self.session:
             await self._create_session()
 
@@ -218,6 +247,7 @@ class SessionMixin:
     async def reset_session(self, model: Optional[str] = None):
         """Destroy the current session and create a fresh one."""
         if model:
+            self._prefer_cli_default_model = False
             self.current_model = model
             self.user_selected_model = model
         logger.info("Resetting session...")
@@ -252,6 +282,7 @@ class SessionMixin:
         Falls back to reset_session() if set_model() fails or no session exists.
         """
         effort_changed = reasoning_effort != self.current_reasoning_effort
+        self._prefer_cli_default_model = False
         self.current_reasoning_effort = reasoning_effort
         self.current_model = model
         self.user_selected_model = model
@@ -421,11 +452,18 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
-        model = self.user_selected_model or self.current_model or DEFAULT_MODEL
-        logger.info(f"Creating new session with model: {model}")
+        selected_model = self.user_selected_model or self.current_model
+        model = (
+            None
+            if self._prefer_cli_default_model and not selected_model
+            else selected_model or DEFAULT_MODEL
+        )
+        if model:
+            logger.info(f"Creating new session with model: {model}")
+        else:
+            logger.info("Creating new session with CLI default model")
 
         session_config = {
-            "model": model,
             "streaming": self.streaming_enabled,
             "on_permission_request": self._on_permission_request,
             "hooks": {
@@ -443,6 +481,8 @@ class SessionMixin:
                 ),
             },
         }
+        if model:
+            session_config["model"] = model
         if self.extra_dirs:
             # Sanitize: strip newlines/control chars from paths before injecting into system prompt
             safe_dirs = [
@@ -483,10 +523,46 @@ class SessionMixin:
             logger.info(f"Disabled skills: {disabled}")
 
         _apply_agent_config(self, session_config)
+        try:
+            self.session = await self.client.create_session(session_config)
+        except Exception as e:
+            if not (
+                "reasoning_effort" in session_config
+                and _is_reasoning_unsupported_error(e)
+            ):
+                raise
 
-        self.session = await self.client.create_session(session_config)
+            import html
+
+            active_cli = html.escape(getattr(self, "_active_cli_source", "unknown"))
+            rejected_model = html.escape(str(model))
+            logger.warning(
+                "Session creation rejected model/reasoning combination "
+                f"model={model!r} effort={self.current_reasoning_effort!r}; "
+                "retrying with the CLI default model and no reasoning effort."
+            )
+            self.current_reasoning_effort = None
+            self.user_selected_model = None
+            self.current_model = None
+            self._prefer_cli_default_model = True
+            self.save_prefs()
+            retry_config = dict(session_config)
+            retry_config.pop("reasoning_effort", None)
+            retry_config.pop("model", None)
+            self.session = await self.client.create_session(retry_config)
+            model = None
+            self._pending_runtime_warning = (
+                "⚠️ <b>Model fallback applied</b>\n\n"
+                f"Model <code>{rejected_model}</code> with reasoning effort is not "
+                f"supported by the active {active_cli} CLI. "
+                "The bot started a session with the active CLI default model instead."
+            )
+
         self.current_model = model
-        logger.info(f"✅ Session created with model: {model}")
+        if model:
+            logger.info(f"✅ Session created with model: {model}")
+        else:
+            logger.info("✅ Session created with CLI default model")
 
         await self._apply_stored_agent_mode("session start")
 

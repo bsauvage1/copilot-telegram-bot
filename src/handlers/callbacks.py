@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 WAITING_PROJECT_NAME = 1
 
 
+def _project_switch_already_succeeded(path: Path) -> bool:
+    """Return True when the project switch succeeded despite a late UI error."""
+    try:
+        return (
+            Path(service.get_working_directory()).resolve() == path.resolve()
+            and service.project_selected
+            and service.session is not None
+        )
+    except Exception:
+        return False
+
+
 async def _safe_reset_session(query) -> bool:
     """Reset session only if no chat is in flight. Returns False and alerts user if busy."""
     if service._chat_lock.locked():
@@ -49,6 +61,10 @@ async def _switch_project(
     # Cockpit card
     cockpit = await service.get_cockpit_message(context.user_data)
     await message.reply_text(cockpit)
+
+    warning = service.pop_pending_runtime_warning()
+    if warning:
+        await message.reply_text(warning, parse_mode="HTML")
 
 
 async def _handle_interaction_callback(query, update, context):
@@ -240,6 +256,10 @@ async def _handle_reasoning_callback(query, context):
     reasoning_effort = None if effort == "default" else effort
 
     await service.change_model(model, reasoning_effort=reasoning_effort)
+    warning = service.pop_pending_runtime_warning()
+    if warning:
+        await query.edit_message_text(warning, parse_mode="HTML")
+        return
     effort_display = effort.capitalize() if effort != "default" else "Default"
     await query.edit_message_text(
         f"✅ Model: {model} | Effort: {effort_display}\n"
@@ -318,6 +338,9 @@ async def _handle_project_callback(query, context):
     try:
         await _switch_project(path, query.message, context, query=query)
     except Exception as e:
+        if _project_switch_already_succeeded(path):
+            logger.warning(f"Suppressing late project-switch warning: {e}")
+            return
         logger.error(f"Project Switch Failed: {e}")
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
@@ -326,6 +349,7 @@ async def _handle_granted_project_callback(query, context):
     """Handle proj_granted: callback queries."""
     from src.config import GRANTED_PROJECT_PATHS
 
+    path = None
     try:
         idx = int(query.data.split(":")[1])
         if idx >= len(GRANTED_PROJECT_PATHS):
@@ -337,6 +361,9 @@ async def _handle_granted_project_callback(query, context):
             return
         await _switch_project(path, query.message, context, query=query)
     except Exception as e:
+        if path is not None and _project_switch_already_succeeded(path):
+            logger.warning(f"Suppressing late granted-project warning: {e}")
+            return
         logger.error(f"Granted Project Switch Failed: {e}")
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
