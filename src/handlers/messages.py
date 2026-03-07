@@ -78,7 +78,8 @@ def cleanup_pending_interactions():
 async def chat_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-    override_text: str = None,
+    override_text: str | None = None,
+    override_attachments: list[dict[str, str]] | None = None,
     _retry: bool = False,
 ):
     if not await security_check(update):
@@ -101,11 +102,11 @@ async def chat_handler(
 
     user_text = override_text or (update.message.text if update.message else "") or ""
 
-    attachments = None  # SDK-native attachments list
+    attachments = override_attachments  # SDK-native attachments list
     attachment = update.message.document or (
         update.message.photo[-1] if update.message.photo else None
     )
-    if attachment:
+    if attachment and attachments is None:
         try:
             file_obj = await attachment.get_file()
             original_name = getattr(attachment, "file_name", None)
@@ -346,6 +347,7 @@ async def chat_handler(
                         update,
                         context,
                         override_text=original_user_text,
+                        override_attachments=attachments,
                         _retry=True,
                     )
                     return

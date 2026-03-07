@@ -31,6 +31,7 @@ class MessageSender:
             None  # The "Working..." message to delete before final response
         )
         self._working_buf: str = ""  # Accumulated tool-event text (streaming mode)
+        self._working_overflow = False  # Whether the working log was truncated
         self._stream_msg: Message | None = None  # Live-edited streaming message
         self._stream_buf: str = ""  # Accumulated streaming text
         self._stream_last_edit: float = 0.0  # Timestamp of last edit
@@ -65,6 +66,7 @@ class MessageSender:
         # Cap buffer to prevent unbounded growth during long sessions
         if len(self._working_buf) > self._STREAM_PREVIEW_LIMIT:
             self._working_buf = self._working_buf[-self._STREAM_PREVIEW_LIMIT :]
+            self._working_overflow = True
 
         # If the streaming card is live, the Working card is not the active
         # display — skip editing; finalize_working_card will show the log.
@@ -74,10 +76,10 @@ class MessageSender:
 
         # Show tail so the card stays within Telegram's limit
         preview = self._working_buf
-        if len(preview) > self._STREAM_PREVIEW_LIMIT:
-            preview = "…\n" + preview[-self._STREAM_PREVIEW_LIMIT :]
+        if self._working_overflow:
+            preview = f"…\n{preview}"
 
-        safe = html_lib.escape(preview)
+        safe = self._fit_escaped_html(preview, prefix="…\n")
         now = _time_mod.monotonic()
         if self._working_msg:
             # Debounce: skip the edit if we edited too recently,
@@ -105,7 +107,7 @@ class MessageSender:
             self._working_last_edit = now
             self._working_first_pending = 0.0
             try:
-                self._working_msg = await self._send_message_return(safe)
+                self._working_msg = await self._safe_send_html(safe)
             except Exception as e:
                 logger.warning(f"Failed to create working message: {e}")
 
@@ -121,6 +123,7 @@ class MessageSender:
                 pass
             self._stream_msg = None
         self._working_buf = ""
+        self._working_overflow = False
         self._interaction_start = _time_mod.monotonic()
 
     async def create_working(self):
@@ -156,10 +159,10 @@ class MessageSender:
         # Finalize: just show the tool-event log (no elapsed footer — avoids
         # Telegram re-focusing the Working card instead of the new response below).
         final = self._working_buf
-        if len(final) > self._STREAM_PREVIEW_LIMIT:
-            final = "…\n" + final[-self._STREAM_PREVIEW_LIMIT :]
+        if self._working_overflow:
+            final = f"…\n{final}"
         try:
-            safe = html_lib.escape(final)
+            safe = self._fit_escaped_html(final, prefix="…\n")
             await asyncio.wait_for(
                 self._working_msg.edit_text(safe, parse_mode=ParseMode.HTML),
                 timeout=10.0,
@@ -168,6 +171,8 @@ class MessageSender:
             logger.debug(f"Could not finalize working card: {e}")
         finally:
             self._working_msg = None
+            self._working_buf = ""
+            self._working_overflow = False
 
     # Max chars to show in a live streaming edit (leave headroom for HTML escape overhead)
     _STREAM_PREVIEW_LIMIT = 3200
@@ -203,6 +208,7 @@ class MessageSender:
         preview = self._stream_buf
         if len(preview) > self._STREAM_PREVIEW_LIMIT:
             preview = "…" + preview[-self._STREAM_PREVIEW_LIMIT :]
+        safe = self._fit_escaped_html(preview, prefix="…")
 
         if not self._stream_msg:
             # Guard: another task is already creating the message — skip.
@@ -219,7 +225,6 @@ class MessageSender:
             # Keep the Working card as a permanent log — create a NEW message
             # for streaming content (don't reuse _working_msg).
             try:
-                safe = html_lib.escape(preview)
                 self._stream_msg = await self.chat.send_message(
                     safe, parse_mode=ParseMode.HTML
                 )
@@ -230,7 +235,6 @@ class MessageSender:
                 self._stream_last_edit = _time_mod.monotonic()
         else:
             try:
-                safe = html_lib.escape(preview)
                 await asyncio.wait_for(
                     self._stream_msg.edit_text(safe, parse_mode=ParseMode.HTML),
                     timeout=10.0,
@@ -291,15 +295,9 @@ class MessageSender:
         # For single-chunk responses, edit the live card in place — avoids the
         # "card disappears then reappears" flash that delete+resend causes.
         if msg and len(chunks) == 1:
-            try:
-                safe = html_lib.escape(chunks[0])
-                await asyncio.wait_for(
-                    msg.edit_text(safe, parse_mode=ParseMode.HTML),
-                    timeout=10.0,
-                )
+            safe = self._ensure_safe_markdown(chunks[0])
+            if await self._edit_message(msg, safe):
                 return
-            except Exception:
-                pass  # Fall through to delete + resend
 
         # Multi-chunk or edit failed: delete the preview and send as new messages
         if msg:
@@ -309,8 +307,40 @@ class MessageSender:
                 pass
 
         for chunk in chunks:
-            safe = html_lib.escape(chunk)
-            await self._safe_send_html(safe)
+            safe = self._ensure_safe_markdown(chunk)
+            await self._send_message(safe)
+
+    def _fit_escaped_html(
+        self, text: str, prefix: str = "", limit: int | None = None
+    ) -> str:
+        """Escape text and trim from the front until it fits Telegram's limit."""
+        if not text:
+            return ""
+
+        max_len = limit or self.PAGE_LIMIT
+        escaped = html_lib.escape(text)
+        if len(escaped) <= max_len:
+            return escaped
+
+        lo = 0
+        hi = len(text)
+        best = html_lib.escape(prefix) if prefix else escaped[:max_len]
+
+        while lo <= hi:
+            take = (lo + hi) // 2
+            if take >= len(text):
+                candidate = text
+            else:
+                candidate = f"{prefix}{text[-take:]}"
+
+            escaped_candidate = html_lib.escape(candidate)
+            if len(escaped_candidate) <= max_len:
+                best = escaped_candidate
+                lo = take + 1
+            else:
+                hi = take - 1
+
+        return best
 
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.
@@ -414,24 +444,25 @@ class MessageSender:
             text += "`"
         return text
 
-    async def _edit_message(self, message: Message, text: str, _retry_count: int = 0):
+    async def _edit_message(
+        self, message: Message, text: str, _retry_count: int = 0
+    ) -> bool:
         """Edit a Telegram message with markdown fallback."""
         try:
             await asyncio.wait_for(
                 message.edit_text(text, parse_mode=ParseMode.MARKDOWN),
                 timeout=10.0,
             )
-            return
+            return True
         except RetryAfter as e:
             if _retry_count >= 3:
                 logger.warning("⏱️ edit_message max retries reached — skipping")
-                return
+                return False
             await asyncio.sleep(e.retry_after)
-            await self._edit_message(message, text, _retry_count + 1)
-            return  # don't fall through to plain-text fallback after a successful retry
+            return await self._edit_message(message, text, _retry_count + 1)
         except BadRequest as e:
             if "Message is not modified" in str(e):
-                return  # not an error — message already has this content
+                return True  # not an error — message already has this content
             elif "Can't parse entities" in str(e):
                 try:
                     await asyncio.wait_for(
@@ -440,6 +471,7 @@ class MessageSender:
                         ),
                         timeout=10.0,
                     )
+                    return True
                 except Exception:
                     logger.warning("Failed to edit message even as plain text")
             else:
@@ -454,8 +486,10 @@ class MessageSender:
                 message.edit_text(text),
                 timeout=10.0,
             )
+            return True
         except Exception as e:
             logger.error(f"❌ edit_message plain-text fallback failed: {e}")
+        return False
 
     async def _safe_send(self, text: str, _retry_count: int = 0) -> Message | None:
         """Core send logic with retry, markdown fallback, and error handling.
@@ -503,7 +537,9 @@ class MessageSender:
                 logger.error(f"❌ send_message plain-text fallback failed: {fe}")
         return None
 
-    async def _safe_send_html(self, html_text: str) -> Message | None:
+    async def _safe_send_html(
+        self, html_text: str, _retry_count: int = 0
+    ) -> Message | None:
         """Send a pre-escaped HTML message, with plain-text fallback on parse error."""
         try:
             return await asyncio.wait_for(
@@ -511,8 +547,11 @@ class MessageSender:
                 timeout=10.0,
             )
         except RetryAfter as e:
+            if _retry_count >= 3:
+                logger.warning("⏱️ _safe_send_html max retries reached — skipping")
+                return None
             await asyncio.sleep(e.retry_after)
-            return await self._safe_send_html(html_text)
+            return await self._safe_send_html(html_text, _retry_count + 1)
         except BadRequest as e:
             logger.warning(f"HTML send failed ({e}), falling back to plain text")
             try:

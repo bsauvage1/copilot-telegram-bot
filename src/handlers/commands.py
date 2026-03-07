@@ -15,7 +15,13 @@ from telegram.ext import ContextTypes, ConversationHandler
 from src.config import WORKSPACE_PATH
 from src.core.service import service
 from src.core.context import ctx
-from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path, safe_read_instructions, EMPTY_FILE_SENTINEL, extract_summary
+from src.core.instructions import (
+    USER_INSTRUCTIONS_PATH,
+    project_instructions_path,
+    safe_read_instructions,
+    EMPTY_FILE_SENTINEL,
+    extract_summary,
+)
 from src.handlers.messages import chat_handler
 from src.handlers.utils import security_check, check_project_selected
 from src.ui.formatters import format_tokens, format_percentage, get_model_context_limit
@@ -38,7 +44,9 @@ def _is_prerelease(version_text: str) -> bool:
     if not match:
         return False
     suffix = match.group(1)
-    return bool(re.match(r"[._-]?(alpha|beta|rc|dev|pre|snapshot)", suffix, re.IGNORECASE))
+    return bool(
+        re.match(r"[._-]?(alpha|beta|rc|dev|pre|snapshot)", suffix, re.IGNORECASE)
+    )
 
 
 def _parse_version(version_text: str) -> tuple[int, int, int] | None:
@@ -87,6 +95,7 @@ async def _fetch_json(url: str, timeout: float = 5.0) -> dict:
 
 _latest_versions_lock = asyncio.Lock()
 
+
 async def _get_latest_versions() -> dict[str, str]:
     now = time.time()
     cached = _LATEST_CACHE.get("data")
@@ -106,8 +115,12 @@ async def _get_latest_versions() -> dict[str, str]:
             "sdk_release_url": "https://github.com/github/copilot-sdk/releases",
         }
 
-        cli_task = _fetch_json("https://api.github.com/repos/github/copilot-cli/releases/latest")
-        sdk_release_task = _fetch_json("https://api.github.com/repos/github/copilot-sdk/releases/latest")
+        cli_task = _fetch_json(
+            "https://api.github.com/repos/github/copilot-cli/releases/latest"
+        )
+        sdk_release_task = _fetch_json(
+            "https://api.github.com/repos/github/copilot-sdk/releases/latest"
+        )
         sdk_pypi_task = _fetch_json("https://pypi.org/pypi/github-copilot-sdk/json")
 
         cli_json, sdk_release_json, sdk_pypi_json = await asyncio.gather(
@@ -116,21 +129,36 @@ async def _get_latest_versions() -> dict[str, str]:
 
         if isinstance(cli_json, dict):
             latest["cli_latest"] = _extract_version(cli_json.get("tag_name", ""))
-            latest["cli_release_url"] = cli_json.get("html_url") or latest["cli_release_url"]
+            latest["cli_release_url"] = (
+                cli_json.get("html_url") or latest["cli_release_url"]
+            )
 
         if isinstance(sdk_release_json, dict):
-            latest["sdk_latest"] = _extract_version(sdk_release_json.get("tag_name", ""))
-            latest["sdk_release_url"] = sdk_release_json.get("html_url") or latest["sdk_release_url"]
+            latest["sdk_latest"] = _extract_version(
+                sdk_release_json.get("tag_name", "")
+            )
+            latest["sdk_release_url"] = (
+                sdk_release_json.get("html_url") or latest["sdk_release_url"]
+            )
         if latest["sdk_latest"] == "unknown" and isinstance(sdk_pypi_json, dict):
-            latest["sdk_latest"] = _extract_version(sdk_pypi_json.get("info", {}).get("version", ""))
-            latest["sdk_release_url"] = "https://pypi.org/project/github-copilot-sdk/#history"
+            latest["sdk_latest"] = _extract_version(
+                sdk_pypi_json.get("info", {}).get("version", "")
+            )
+            latest["sdk_release_url"] = (
+                "https://pypi.org/project/github-copilot-sdk/#history"
+            )
 
         _LATEST_CACHE["data"] = latest
-        got_real_data = latest["cli_latest"] != "unknown" or latest["sdk_latest"] != "unknown"
-        ttl = _LATEST_CACHE_TTL_SECONDS if got_real_data else _LATEST_CACHE_ERROR_TTL_SECONDS
+        got_real_data = (
+            latest["cli_latest"] != "unknown" or latest["sdk_latest"] != "unknown"
+        )
+        ttl = (
+            _LATEST_CACHE_TTL_SECONDS
+            if got_real_data
+            else _LATEST_CACHE_ERROR_TTL_SECONDS
+        )
         _LATEST_CACHE["expires_at"] = time.time() + ttl
         return latest
-
 
 
 _REPO_MAP = {
@@ -156,7 +184,9 @@ async def _fetch_whats_changed(component: str) -> str:
 
     repo = _REPO_MAP.get(component, _REPO_MAP["cli"])
     try:
-        releases = await _fetch_json(f"https://api.github.com/repos/{repo}/releases?per_page=50")
+        releases = await _fetch_json(
+            f"https://api.github.com/repos/{repo}/releases?per_page=50"
+        )
     except Exception as e:
         logger.warning(f"Failed to fetch releases for {repo}: {e}")
         return "⚠️ Could not fetch release info from GitHub. Try again later."
@@ -176,7 +206,11 @@ async def _fetch_whats_changed(component: str) -> str:
         return f"No releases found between {current} and {latest}."
 
     # Sort oldest → newest
-    relevant.sort(key=lambda r: _parse_version(_extract_version(r.get("tag_name", ""))) or (0, 0, 0))
+    relevant.sort(
+        key=lambda r: (
+            _parse_version(_extract_version(r.get("tag_name", ""))) or (0, 0, 0)
+        )
+    )
 
     sections: list[str] = []
     for rel in relevant:
@@ -191,7 +225,9 @@ async def _fetch_whats_changed(component: str) -> str:
             name = rel.get("name", tag)
             sections.append(f"<b>{html.escape(name)}</b>\n<i>(no changelog body)</i>")
 
-    header = f"📋 <b>{label} Changes: {html.escape(current)} → {html.escape(latest)}</b>\n"
+    header = (
+        f"📋 <b>{label} Changes: {html.escape(current)} → {html.escape(latest)}</b>\n"
+    )
     return header + "\n\n".join(sections)
 
 
@@ -226,24 +262,38 @@ def _extract_changes_section(body: str) -> str:
 
 
 async def _get_version_snapshot() -> dict[str, Any]:
-    local_cli = await service.get_cli_version()
+    cli_runtime = await service.get_cli_runtime_info(probe=True)
+    installed_cli = cli_runtime["installed_version"] or "not found"
+    used_cli = cli_runtime["active_version"] or "unknown"
     sdk_installed = _get_sdk_version()
     latest = await _get_latest_versions()
 
-    cli_state = _compare_versions(local_cli, latest["cli_latest"])
+    cli_state = _compare_versions(used_cli, latest["cli_latest"])
+    installed_cli_state = _compare_versions(installed_cli, latest["cli_latest"])
     sdk_state = _compare_versions(sdk_installed, latest["sdk_latest"])
 
     return {
-        "local_cli": local_cli,
+        "local_cli": used_cli,
+        "installed_cli": installed_cli,
+        "used_cli": used_cli,
+        "active_cli_source": cli_runtime["active_source"] or "unknown",
+        "cli_fallback_reason": cli_runtime["fallback_reason"],
+        "installed_cli_path": cli_runtime["installed_path"],
+        "used_cli_path": cli_runtime["active_path"],
         "sdk_installed": sdk_installed,
         "cli_latest": latest["cli_latest"],
         "sdk_latest": latest["sdk_latest"],
         "cli_state": cli_state,
+        "installed_cli_state": installed_cli_state,
         "sdk_state": sdk_state,
         "cli_release_url": latest["cli_release_url"],
         "sdk_release_url": latest["sdk_release_url"],
-        "cli_compare_url": _make_compare_url("github/copilot-cli", local_cli, latest["cli_latest"]),
-        "sdk_compare_url": _make_compare_url("github/copilot-sdk", sdk_installed, latest["sdk_latest"]),
+        "cli_compare_url": _make_compare_url(
+            "github/copilot-cli", used_cli, latest["cli_latest"]
+        ),
+        "sdk_compare_url": _make_compare_url(
+            "github/copilot-sdk", sdk_installed, latest["sdk_latest"]
+        ),
     }
 
 
@@ -263,19 +313,37 @@ async def _build_versions_panel() -> tuple[str, InlineKeyboardMarkup]:
 
     cli_state = s["cli_state"]
     sdk_state = s["sdk_state"]
+    used_label = "CLI (used)"
+    if s["active_cli_source"] in {"system", "bundled"}:
+        used_label = f"CLI (used: {s['active_cli_source']})"
 
     lines = [
         "🧭 <b>Version Intel</b>",
-        _ver_line("CLI", s["local_cli"], s["cli_latest"], cli_state),
+        _ver_line(
+            "CLI (installed)",
+            s["installed_cli"],
+            s["cli_latest"],
+            s["installed_cli_state"],
+        ),
+        _ver_line(used_label, s["used_cli"], s["cli_latest"], cli_state),
         _ver_line("SDK", s["sdk_installed"], s["sdk_latest"], sdk_state),
     ]
 
+    if s["active_cli_source"] == "bundled" and s["installed_cli"] != s["used_cli"]:
+        lines.append("")
+        lines.append(
+            "⚠️ <b>Runtime fallback active:</b> installed CLI is incompatible "
+            "with the current SDK, so the bundled CLI is being used instead."
+        )
+
     # Upgrade commands (only when something needs action)
     cmds: list[str] = []
-    if cli_state == "outdated":
+    if s["installed_cli_state"] == "outdated":
         cmds.append("<code>copilot update</code>")
     if sdk_state == "outdated":
-        target = html.escape(s["sdk_latest"]) if s["sdk_latest"] != "unknown" else "latest"
+        target = (
+            html.escape(s["sdk_latest"]) if s["sdk_latest"] != "unknown" else "latest"
+        )
         cmds.append(f'<code>uv add "github-copilot-sdk=={target}"</code>')
     if cmds:
         lines.append("")
@@ -290,19 +358,23 @@ async def _build_versions_panel() -> tuple[str, InlineKeyboardMarkup]:
 
     # CLI row
     if s["cli_compare_url"]:
-        buttons.append([
-            InlineKeyboardButton("📄 CLI Notes", url=s["cli_release_url"]),
-            InlineKeyboardButton("📋 CLI Changes", callback_data="changelog:cli"),
-        ])
+        buttons.append(
+            [
+                InlineKeyboardButton("📄 CLI Notes", url=s["cli_release_url"]),
+                InlineKeyboardButton("📋 CLI Changes", callback_data="changelog:cli"),
+            ]
+        )
     else:
         buttons.append([InlineKeyboardButton("📄 CLI Notes", url=s["cli_release_url"])])
 
     # SDK row
     if s["sdk_compare_url"]:
-        buttons.append([
-            InlineKeyboardButton("📄 SDK Notes", url=s["sdk_release_url"]),
-            InlineKeyboardButton("📋 SDK Changes", callback_data="changelog:sdk"),
-        ])
+        buttons.append(
+            [
+                InlineKeyboardButton("📄 SDK Notes", url=s["sdk_release_url"]),
+                InlineKeyboardButton("📋 SDK Changes", callback_data="changelog:sdk"),
+            ]
+        )
     else:
         buttons.append([InlineKeyboardButton("📄 SDK Notes", url=s["sdk_release_url"])])
 
@@ -313,6 +385,7 @@ def _get_sdk_version() -> str:
     """Get copilot SDK package version."""
     try:
         from importlib.metadata import version
+
         return version("github-copilot-sdk")
     except Exception:
         return "unknown"
@@ -320,63 +393,72 @@ def _get_sdk_version() -> str:
 
 # --- Handlers ---
 
+
 async def build_start_menu() -> tuple[str, InlineKeyboardMarkup]:
     """Build the project selector card for /start.
-    
+
     Returns (selector_text, selector_keyboard).
     """
     from src.ui.menus import get_project_keyboard
+
     keyboard = get_project_keyboard(WORKSPACE_PATH)
     return "📂 Select a project below to begin.", keyboard
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start command received")
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     selector_text, selector_kb = await build_start_menu()
     # Project selector card (deleted on selection)
     sel_msg = await update.message.reply_text(selector_text, reply_markup=selector_kb)
-    context.user_data['start_message_id'] = sel_msg.message_id
-    context.user_data['start_chat_id'] = sel_msg.chat_id
+    context.user_data["start_message_id"] = sel_msg.message_id
+    context.user_data["start_chat_id"] = sel_msg.chat_id
     return ConversationHandler.END
 
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     from src.ui.menus import get_help_content
+
     msg = get_help_content(project_selected=service.project_selected)
     await update.message.reply_text(msg)
 
+
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     report = await service.get_usage_report()
     await update.message.reply_text(report)
+
 
 async def _mode_reply(update, emoji: str, label: str, rpc_ok: bool):
     """Send a mode-switch confirmation, noting if RPC was deferred.
     label must be a trusted string — callers must not pass user-supplied input directly."""
     suffix = "" if rpc_ok else " <i>(will apply on next session start)</i>"
-    await update.message.reply_text(f"{emoji} {html.escape(label)}{suffix}", parse_mode="HTML")
+    await update.message.reply_text(
+        f"{emoji} {html.escape(label)}{suffix}", parse_mode="HTML"
+    )
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
-    context.user_data['plan_mode'] = False
+    context.user_data["plan_mode"] = False
     # Set directly (no RPC) — session is about to be torn down anyway
     service.agent_mode = "interactive"
     await service.reset_session()
     await update.message.reply_text("🧹 Session Cleared\nMemory reset.")
 
+
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the currently processing request using SDK session.abort()."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     if not service.session:
         await update.message.reply_text("⚠️ No active session.")
@@ -392,46 +474,51 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Cancel failed: {e}")
         await update.message.reply_text(f"⚠️ Cancel failed: {e}")
 
+
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
-    context.user_data['plan_mode'] = False
+    context.user_data["plan_mode"] = False
     rpc_ok = await service.set_agent_mode("interactive")
     logger.info("Switched to Interactive mode")
     await _mode_reply(update, "💬", "Switched to Interactive (Edit) Mode", rpc_ok)
 
+
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
-    
+
     args = context.args
     if args:
         # /plan <prompt> — switch to plan mode and send prompt
-        context.user_data['plan_mode'] = True
+        context.user_data["plan_mode"] = True
         rpc_ok = await service.set_agent_mode("plan")
         await _mode_reply(update, "📝", "Plan Mode ON", rpc_ok)
         prompt = " ".join(args)
         await chat_handler(update, context, override_text=prompt)
     else:
         # /plan with no args — toggle between plan and interactive
-        currently_plan = context.user_data.get('plan_mode', False)
+        currently_plan = context.user_data.get("plan_mode", False)
         if currently_plan:
-            context.user_data['plan_mode'] = False
+            context.user_data["plan_mode"] = False
             rpc_ok = await service.set_agent_mode("interactive")
-            await _mode_reply(update, "💬", "Switched to Interactive (Edit) Mode", rpc_ok)
+            await _mode_reply(
+                update, "💬", "Switched to Interactive (Edit) Mode", rpc_ok
+            )
         else:
-            context.user_data['plan_mode'] = True
+            context.user_data["plan_mode"] = True
             rpc_ok = await service.set_agent_mode("plan")
             await _mode_reply(update, "📝", "Switched to Plan Mode", rpc_ok)
 
+
 async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     cwd = service.get_working_directory()
     await update.message.reply_text(f"📂 Current working directory:\n{cwd}")
@@ -439,23 +526,25 @@ async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cockpit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the session cockpit — current model, mode, agent, MCP, workspace and stats."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     msg = await service.get_cockpit_message(context.user_data)
     await update.message.reply_text(msg)
+
 
 async def _send_paged(message, text: str, header: str = "", max_msgs: int = 5):
     """Send text across multiple messages, capped at max_msgs, in preformatted blocks."""
     from src.config import TELEGRAM_MSG_LIMIT
     import html as html_lib
+
     chunk_size = TELEGRAM_MSG_LIMIT - 50  # leave room for <pre> tags and header
-    chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    chunks = [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
     if len(chunks) > max_msgs:
         keep = chunk_size * max_msgs
         text = text[:keep]
-        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        chunks = [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
         chunks[-1] += f"\n... truncated (showing {max_msgs}/{len(chunks)} pages)"
     total = len(chunks)
     for idx, chunk in enumerate(chunks):
@@ -465,24 +554,39 @@ async def _send_paged(message, text: str, header: str = "", max_msgs: int = 5):
 
 
 async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Top-level only\n(no subfolders)", callback_data="ls:0:1")],
-        [InlineKeyboardButton("🌿 Shallow\n(1 level deep)", callback_data="ls:1:1")],
-        [InlineKeyboardButton("🌳 Full tree\n(2 levels deep)", callback_data="ls:2")],
-    ])
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "📋 Top-level only\n(no subfolders)", callback_data="ls:0:1"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🌿 Shallow\n(1 level deep)", callback_data="ls:1:1"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🌳 Full tree\n(2 levels deep)", callback_data="ls:2"
+                )
+            ],
+        ]
+    )
     await update.message.reply_text("Choose file tree view:", reply_markup=keyboard)
 
 
 async def add_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add an extra directory to the session's accessible scope."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
 
     path_arg = " ".join(context.args).strip() if context.args else ""
@@ -502,8 +606,7 @@ async def add_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         path.relative_to(_home)
     except ValueError:
         await update.message.reply_text(
-            f"❌ Path must be within your home directory ({_home}).\n"
-            f"Rejected: {path}"
+            f"❌ Path must be within your home directory ({_home}).\nRejected: {path}"
         )
         return
 
@@ -529,9 +632,9 @@ async def add_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_dirs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List the current project directory and any extra directories."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
 
     cwd = service.session_info.cwd or str(ctx.root_path)
@@ -540,7 +643,9 @@ async def list_dirs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("\n➕ Extra directories:")
         for d in service.extra_dirs:
             lines.append(f"  • {d}")
-        lines.append("\nUse /reset to apply to a new session, or /remove_dir <path> to remove one.")
+        lines.append(
+            "\nUse /reset to apply to a new session, or /remove_dir <path> to remove one."
+        )
     else:
         lines.append("\nNo extra directories. Use /add_dir <path> to add one.")
     await update.message.reply_text("\n".join(lines))
@@ -548,9 +653,9 @@ async def list_dirs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def remove_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove an extra directory from the session's accessible scope."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
 
     path_arg = " ".join(context.args).strip() if context.args else ""
@@ -560,89 +665,100 @@ async def remove_dir_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     path_str = str(Path(path_arg).expanduser().resolve())
     if path_str not in service.extra_dirs:
-        await update.message.reply_text(f"❌ Not in extra dirs: {path_str}\nUse /list_dirs to see current list.")
+        await update.message.reply_text(
+            f"❌ Not in extra dirs: {path_str}\nUse /list_dirs to see current list."
+        )
         return
 
     service.extra_dirs.remove(path_str)
     await update.message.reply_text(
         f"✅ Removed: {path_str}\n"
-        + (f"Remaining: {len(service.extra_dirs)} extra dir(s)." if service.extra_dirs else "No extra directories left.")
+        + (
+            f"Remaining: {len(service.extra_dirs)} extra dir(s)."
+            if service.extra_dirs
+            else "No extra directories left."
+        )
     )
 
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
-    
+
     # Get current model context usage info
     if service.last_assistant_usage:
         usage = service.last_assistant_usage
-        model_name = getattr(usage, 'model', service.current_model or 'Auto')
-        
+        model_name = getattr(usage, "model", service.current_model or "Auto")
+
         # Get token information
         input_tokens = 0
         output_tokens = 0
         cache_tokens = 0
-        
+
         # Try to get token info from last_assistant_usage or last_session_usage
-        if hasattr(usage, 'input_tokens'):
+        if hasattr(usage, "input_tokens"):
             input_tokens = int(usage.input_tokens or 0)
-        if hasattr(usage, 'output_tokens'):
+        if hasattr(usage, "output_tokens"):
             output_tokens = int(usage.output_tokens or 0)
-        if hasattr(usage, 'cache_read_tokens'):
+        if hasattr(usage, "cache_read_tokens"):
             cache_tokens = int(usage.cache_read_tokens or 0)
-        
+
         # Calculate totals and percentages (estimates — actual limits vary by model)
         total_used = input_tokens + output_tokens
         context_limit = get_model_context_limit(model_name)
-        
+
         # Build message similar to the example
         total_pct = format_percentage(total_used, context_limit)
         system_pct = format_percentage(input_tokens, context_limit)
         messages_pct = format_percentage(output_tokens, context_limit)
         free_space = context_limit - total_used
         free_pct = format_percentage(free_space, context_limit)
-        
+
         msg = (
             f"{model_name} · {format_tokens(total_used)}/{format_tokens(context_limit)} tokens ({total_pct})\n"
             f"Context (In):  {format_tokens(input_tokens)} ({system_pct})\n"
             f"Response (Out): {format_tokens(output_tokens)} ({messages_pct})\n"
             f"Free Space:    {format_tokens(free_space)} ({free_pct})\n"
         )
-        
+
         if cache_tokens > 0:
             cache_pct = format_percentage(cache_tokens, context_limit)
             msg += f"Cached:        {format_tokens(cache_tokens)} ({cache_pct})\n"
-        
+
         await update.message.reply_text(msg)
     else:
         await update.message.reply_text(
             "📊 No usage data available yet. Send a message first."
         )
 
+
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     from src.ui.menus import get_model_keyboard
+
     msg = await update.message.reply_text("🔄 Fetching models...")
     keyboard = get_model_keyboard(await service.get_available_models())
     await msg.edit_text("Select a model:", reply_markup=keyboard)
 
+
 async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     msg = await update.message.reply_text("📤 Exporting session...")
     try:
         file_path = await service.export_session_to_file()
         if file_path and os.path.exists(file_path):
-            with open(file_path, 'rb') as f:
-                await update.message.reply_document(document=f, filename=os.path.basename(file_path))
+            with open(file_path, "rb") as f:
+                await update.message.reply_document(
+                    document=f, filename=os.path.basename(file_path)
+                )
             os.remove(file_path)
             await msg.delete()
         else:
@@ -651,16 +767,17 @@ async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Share failed: {e}")
         await msg.edit_text(f"⚠️ Error sharing session: {e}")
 
+
 async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show session info and workspace summary."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
 
     # Fetch latest session metadata (name, created, modified) from list_sessions()
     await service.populate_session_metadata()
-    
+
     session_info = service.get_session_info()
     tracker = service.usage_tracker
 
@@ -668,15 +785,15 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime_str = session_info.duration()
 
     model = service.user_selected_model or service.current_model or "Auto"
-    mode = "Planning" if context.user_data.get('plan_mode') else "Chat"
+    mode = "Planning" if context.user_data.get("plan_mode") else "Chat"
     status = "Expired" if service.session_expired else "Active"
-    
+
     # Full session ID from session_info
     session_id_full = session_info.session_id or service.session_id
-    
+
     # Use created time from session_info (ISO format string from SDK)
     created_str = session_info.created or "N/A"
-    
+
     # Use session_info fields
     cwd = session_info.cwd or str(ctx.root_path)
     branch = session_info.branch or "N/A"
@@ -697,7 +814,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Path: {cwd}\n"
         f"• Branch: {branch}\n"
     )
-    
+
     # Git root and repository if available
     if session_info.git_root:
         msg += f"• Git Root: {session_info.git_root}\n"
@@ -706,8 +823,14 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Token context
     if tracker.current_tokens or tracker.token_limit:
-        pct = (tracker.current_tokens / tracker.token_limit * 100) if tracker.token_limit else 0
-        msg += f"• Context: {tracker.current_tokens}/{tracker.token_limit} ({pct:.0f}%)\n"
+        pct = (
+            (tracker.current_tokens / tracker.token_limit * 100)
+            if tracker.token_limit
+            else 0
+        )
+        msg += (
+            f"• Context: {tracker.current_tokens}/{tracker.token_limit} ({pct:.0f}%)\n"
+        )
 
     # Quota status
     quota_summary = tracker.get_quota_summary()
@@ -726,11 +849,12 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show git diff for the current project (paged, non-interactive)."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     cwd = service.get_working_directory()
     msg = await update.message.reply_text("🔍 Running git diff...")
     try:
@@ -749,20 +873,27 @@ async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chunks, current, current_len = [], [], 0
         for line in diff.splitlines():
             if current_len + len(line) + 1 > 2500 and current:
-                chunks.append('\n'.join(current))
+                chunks.append("\n".join(current))
                 current, current_len = [line], len(line)
             else:
                 current.append(line)
                 current_len += len(line) + 1
         if current:
-            chunks.append('\n'.join(current))
+            chunks.append("\n".join(current))
         total = len(chunks)
         # Offer paging choice
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📄 1 page", callback_data="diff:1")],
-            [InlineKeyboardButton("📄 3 pages", callback_data="diff:3")],
-            [InlineKeyboardButton(f"📄 Full ({total} page{'s' if total != 1 else ''})", callback_data=f"diff:{total}")],
-        ])
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("📄 1 page", callback_data="diff:1")],
+                [InlineKeyboardButton("📄 3 pages", callback_data="diff:3")],
+                [
+                    InlineKeyboardButton(
+                        f"📄 Full ({total} page{'s' if total != 1 else ''})",
+                        callback_data=f"diff:{total}",
+                    )
+                ],
+            ]
+        )
         context.user_data["_diff_chunks"] = chunks
         await msg.edit_text(
             f"📋 Diff has {total} page(s). How much to show?",
@@ -777,9 +908,9 @@ async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View Copilot instructions — status panel showing active instructions with path and summary."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     cwd = service.get_working_directory()
     user_path = USER_INSTRUCTIONS_PATH
@@ -798,14 +929,20 @@ async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 summary = extract_summary(raw)
                 summary_line = f"\n   <i>{html.escape(summary)}</i>" if summary else ""
                 path_line = f"\n   <code>{html.escape(str(path))}</code>"
-                status_lines.append(f"✅ <b>{label}</b>: active{path_line}{summary_line}")
+                status_lines.append(
+                    f"✅ <b>{label}</b>: active{path_line}{summary_line}"
+                )
             elif raw == EMPTY_FILE_SENTINEL:
                 status_lines.append(f"⚠️ <b>{label}</b>: file is empty")
             else:
-                status_lines.append(f"🚫 <b>{label}</b>: blocked (symlink outside allowed dir)")
+                status_lines.append(
+                    f"🚫 <b>{label}</b>: blocked (symlink outside allowed dir)"
+                )
         else:
             path_str = html.escape(str(path)) if path else "n/a"
-            status_lines.append(f"⚠️ <b>{label}</b>: not found — <code>{path_str}</code>")
+            status_lines.append(
+                f"⚠️ <b>{label}</b>: not found — <code>{path_str}</code>"
+            )
 
     msg = "📋 <b>Copilot Instructions</b>\n\n" + "\n".join(status_lines)
     await update.message.reply_text(msg, parse_mode="HTML")
@@ -813,7 +950,7 @@ async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def versions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show machine/runtime versions, latest releases, and upgrade links."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     text, keyboard = await _build_versions_panel()
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
@@ -821,13 +958,14 @@ async def versions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Update the Copilot CLI to the latest version."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     import shutil
+
     # Try shutil.which first, then fall back to known install locations
     cli = (
         shutil.which("copilot")
-        or getattr(service.client, 'options', {}).get('cli_path')
+        or getattr(service.client, "options", {}).get("cli_path")
         or os.path.expanduser("~/.local/bin/copilot")
         or "/usr/local/bin/copilot"
     )
@@ -837,7 +975,8 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔄 Updating Copilot CLI...")
     try:
         proc = await asyncio.create_subprocess_exec(
-            cli, "update",
+            cli,
+            "update",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -853,7 +992,7 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def allow_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle allow-all-tools mode (skip per-request permission prompts). Alias: /yolo"""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     service.allow_all_tools = not service.allow_all_tools
     service.save_prefs()
@@ -865,8 +1004,7 @@ async def allow_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "🔒 Allow All Tools: DISABLED\n"
-            "Per-request permission prompts restored."
+            "🔒 Allow All Tools: DISABLED\nPer-request permission prompts restored."
         )
 
 
@@ -875,39 +1013,47 @@ async def yolo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await allow_all_command(update, context)
 
 
-async def reset_allowed_tools_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reset_allowed_tools_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     """Reset allowed tools — explicitly disables allow-all mode."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     if not service.allow_all_tools:
-        await update.message.reply_text("ℹ️ Allow All Tools is already disabled — no change.")
+        await update.message.reply_text(
+            "ℹ️ Allow All Tools is already disabled — no change."
+        )
         return
     service.allow_all_tools = False
     service.save_prefs()
     await update.message.reply_text(
-        "🔒 Allowed Tools Reset.\n"
-        "Per-request permission prompts restored."
+        "🔒 Allowed Tools Reset.\nPer-request permission prompts restored."
     )
 
 
 _MODE_LABELS = {
     "interactive": "💬 Interactive",
-    "plan":        "📋 Plan",
-    "autopilot":   "🚀 Autopilot",
+    "plan": "📋 Plan",
+    "autopilot": "🚀 Autopilot",
 }
 _MODE_DESCRIPTIONS = {
     "interactive": "Standard chat — Copilot responds and waits for your next message.",
-    "plan":        "Planning only — Copilot outlines steps but won't execute tools or write files.",
-    "autopilot":   "Autonomous — Copilot chains steps and executes without waiting between actions.",
+    "plan": "Planning only — Copilot outlines steps but won't execute tools or write files.",
+    "autopilot": "Autonomous — Copilot chains steps and executes without waiting between actions.",
 }
 
 
 async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show MCP server status — enable/disable servers from mcp-config.json."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    from src.core.mcp_config import load_config, get_builtin_servers, MCP_CONFIG_PATH, query_tools
+    from src.core.mcp_config import (
+        load_config,
+        get_builtin_servers,
+        MCP_CONFIG_PATH,
+        query_tools,
+    )
 
     msg = await update.message.reply_text("🔌 Loading MCP servers…")
 
@@ -937,7 +1083,9 @@ async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             icon = "⬜" if name in disabled else "✅"
             kind = html.escape(srv.get("type", "?"))
             detail = html.escape(srv.get("url", srv.get("command", "")))
-            lines.append(f"  {icon} <b>{html.escape(name)}</b> ({kind})  <code>{detail}</code>")
+            lines.append(
+                f"  {icon} <b>{html.escape(name)}</b> ({kind})  <code>{detail}</code>"
+            )
             if name not in disabled:
                 tools = tools_by_name.get(name)
                 if isinstance(tools, list) and tools:
@@ -950,8 +1098,12 @@ async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = []
     for name in user_servers:
         label = f"{'▶️ Enable' if name in disabled else '⏸ Disable'} {name}"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"mcp_toggle:{name}")])
-    buttons.append([InlineKeyboardButton("🔄 Reload session now", callback_data="mcp_reload")])
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"mcp_toggle:{name}")]
+        )
+    buttons.append(
+        [InlineKeyboardButton("🔄 Reload session now", callback_data="mcp_reload")]
+    )
 
     await msg.edit_text(
         "\n".join(lines),
@@ -962,9 +1114,9 @@ async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show mode picker: Interactive / Plan / Autopilot (maps to session.mode.set)."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -981,40 +1133,63 @@ async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     label = _MODE_LABELS.get(current, current)
     buttons = [
-        [InlineKeyboardButton(
-            f"{'✅ ' if m == current else ''}{_MODE_LABELS[m]}",
-            callback_data=f"mode:{m}"
-        )]
+        [
+            InlineKeyboardButton(
+                f"{'✅ ' if m == current else ''}{_MODE_LABELS[m]}",
+                callback_data=f"mode:{m}",
+            )
+        ]
         for m in ("interactive", "plan", "autopilot")
     ]
     await update.message.reply_text(
         f"🤖 Agent Mode — currently: {label}\n\n"
-        + "\n".join(f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS),
+        + "\n".join(
+            f"{_MODE_LABELS[m]}: {_MODE_DESCRIPTIONS[m]}" for m in _MODE_LABELS
+        ),
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
 
-def _build_agent_picker(agents: list, current: str | None) -> tuple[str, "InlineKeyboardMarkup"]:
+def _build_agent_picker(
+    agents: list, current: str | None
+) -> tuple[str, "InlineKeyboardMarkup"]:
     """Build the agent picker message text and keyboard."""
     import html as _html
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    current_label = _html.escape(next((a["name"] for a in agents if a["key"] == current), "Default") if current else "Default")
+
+    current_label = _html.escape(
+        next((a["name"] for a in agents if a["key"] == current), "Default")
+        if current
+        else "Default"
+    )
     hint = "" if agents else "\n<i>No custom agents found in ~/.copilot/agents/</i>"
-    buttons = [[InlineKeyboardButton(
-        f"{'✅' if not current else '🤖'} Default",
-        callback_data="agent:default"
-    )]]
+    buttons = [
+        [
+            InlineKeyboardButton(
+                f"{'✅' if not current else '🤖'} Default",
+                callback_data="agent:default",
+            )
+        ]
+    ]
     for a in agents:
         icon = "✅" if a["key"] == current else a["icon"]
-        buttons.append([InlineKeyboardButton(f"{icon} {a['name']}", callback_data=f"agent_detail:{a['key']}")])
-    return f"🤖 <b>Select Agent:</b> {current_label}{hint}", InlineKeyboardMarkup(buttons)
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"{icon} {a['name']}", callback_data=f"agent_detail:{a['key']}"
+                )
+            ]
+        )
+    return f"🤖 <b>Select Agent:</b> {current_label}{hint}", InlineKeyboardMarkup(
+        buttons
+    )
 
 
 async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pick a custom agent for the current session."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     from src.core.agents import get_available_agents
 
@@ -1025,9 +1200,9 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set reasoning effort level for models that support it."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     model_id = service.user_selected_model or service.current_model
     if not model_id:
@@ -1044,8 +1219,15 @@ async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     from src.ui.menus import get_reasoning_keyboard
-    current = service.current_reasoning_effort or model_info.get("default_effort") or "default"
-    keyboard = get_reasoning_keyboard(model_id, model_info["supported_efforts"], model_info.get("default_effort"))
+
+    current = (
+        service.current_reasoning_effort
+        or model_info.get("default_effort")
+        or "default"
+    )
+    keyboard = get_reasoning_keyboard(
+        model_id, model_info["supported_efforts"], model_info.get("default_effort")
+    )
     await update.message.reply_text(
         f"🧠 Reasoning Effort — {model_id}\nCurrent: {current}\n\nSelect effort level:",
         reply_markup=keyboard,
@@ -1054,12 +1236,13 @@ async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Browse and resume past Copilot sessions."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     from src.ui.menus import get_sessions_keyboard
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     msg = await update.message.reply_text("🔄 Fetching sessions...")
     try:
         if not service._is_running:
@@ -1072,10 +1255,12 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         project_name = service.project_name or Path(cwd).name
         header, keyboard = get_sessions_keyboard(sessions, cwd_filter=cwd)
         buttons = list(keyboard.inline_keyboard)
-        buttons.append([InlineKeyboardButton("🌐 Show all projects", callback_data="sessions_all")])
+        buttons.append(
+            [InlineKeyboardButton("🌐 Show all projects", callback_data="sessions_all")]
+        )
         await msg.edit_text(
             f"📋 Sessions for: {project_name}\n{header}",
-            reply_markup=InlineKeyboardMarkup(buttons)
+            reply_markup=InlineKeyboardMarkup(buttons),
         )
     except Exception as e:
         logger.error(f"sessions_command failed: {e}")
@@ -1084,7 +1269,7 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def infinite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle infinite sessions (automatic context compaction)."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     service.infinite_sessions_enabled = not service.infinite_sessions_enabled
     service.save_prefs()
@@ -1095,17 +1280,18 @@ async def infinite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "🔒 Infinite Sessions: DISABLED\n"
-            "Manual context management restored."
+            "🔒 Infinite Sessions: DISABLED\nManual context management restored."
         )
 
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check Copilot CLI connection and auth status."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     if not service._is_running:
-        await update.message.reply_text("🔴 Copilot CLI is not running. Select a project first.")
+        await update.message.reply_text(
+            "🔴 Copilot CLI is not running. Select a project first."
+        )
         return
     msg = await update.message.reply_text("🔄 Pinging...")
     try:
@@ -1128,23 +1314,27 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Compact context: resets session. Enable /infinite for auto-compaction."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
-    context.user_data['plan_mode'] = False
+    context.user_data["plan_mode"] = False
     # Set directly (no RPC) — session is about to be torn down anyway
     service.agent_mode = "interactive"
     await service.reset_session()
-    tip = "" if service.infinite_sessions_enabled else "\nTip: Use /infinite to enable automatic context compaction."
+    tip = (
+        ""
+        if service.infinite_sessions_enabled
+        else "\nTip: Use /infinite to enable automatic context compaction."
+    )
     await update.message.reply_text(f"🗜️ Context compacted — session reset.{tip}")
 
 
 async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Run an AI code review on the current git diff."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     cwd = service.get_working_directory()
     msg = await update.message.reply_text("🔍 Fetching diff for review...")
@@ -1184,9 +1374,9 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generate a changelog entry from recent git commits."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
-    if not await check_project_selected(update): 
+    if not await check_project_selected(update):
         return
     cwd = service.get_working_directory()
     msg = await update.message.reply_text("🔍 Reading git log...")
@@ -1217,14 +1407,15 @@ async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def streamer_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle live streaming mode (real-time token display)."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     service.streaming_enabled = not service.streaming_enabled
     service.save_prefs()
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔄 Reset session now", callback_data="streamer:reset")
-    ]])
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔄 Reset session now", callback_data="streamer:reset")]]
+    )
     if service.streaming_enabled:
         await update.message.reply_text(
             "📡 Streamer Mode: ENABLED\n"
@@ -1243,7 +1434,7 @@ async def streamer_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show skill directories and loaded skills — enable/disable individual skills."""
-    if not await security_check(update): 
+    if not await security_check(update):
         return
     from src.core.skills_config import scan_skills, get_disabled_skills
     from src.core.context import ctx
