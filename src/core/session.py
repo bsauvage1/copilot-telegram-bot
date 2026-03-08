@@ -29,6 +29,8 @@ from src.core.instructions import (
     safe_read_instructions,
     EMPTY_FILE_SENTINEL,
 )
+from copilot.types import PermissionRequestResult
+from copilot.generated.session_events import PermissionRequestKind
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +65,17 @@ _TOOL_ALLOWLIST = frozenset(
 class _PermissionRequest:
     """Lightweight container for tool permission request data."""
 
-    __slots__ = ("tool_name", "arguments")
+    __slots__ = ("tool_name", "arguments", "can_offer_session_approval")
 
-    def __init__(self, name: str, args: dict):
+    def __init__(
+        self,
+        name: str,
+        args: dict,
+        can_offer_session_approval: bool = False,
+    ):
         self.tool_name = name
         self.arguments = args
+        self.can_offer_session_approval = can_offer_session_approval
 
 
 def _apply_agent_config(svc, cfg: dict) -> None:
@@ -256,6 +264,7 @@ class SessionMixin:
         self.session_id = str(uuid.uuid4())[:8]
         self._tool_call_names.clear()
         self._show_file_args.clear()
+        self._session_approved_tools.clear()
         self.last_session_usage = None
         self.last_assistant_usage = None
 
@@ -643,17 +652,103 @@ class SessionMixin:
             logger.debug("No running event loop — skipping session context extraction")
 
     async def _on_permission_request(self, request, invocation=None):
-        """SDK-level permission handler (required since v0.1.29).
+        """Gate built-in CLI tool execution via Telegram Allow/Deny UI."""
+        kind = request.kind
+        logger.debug(
+            f"🔐 _on_permission_request CALLED | kind={kind.value} |"
+            f" tool={getattr(request, 'tool_name', None)} |"
+            f" file={getattr(request, 'file_name', None) or getattr(request, 'path', None)} |"
+            f" interaction_callback={self.interaction_callback is not None}"
+        )
 
-        Always approves — fine-grained tool-level decisions are
-        handled by the on_pre_tool_use hook in _permission_bridge.
-        """
-        return {"kind": "approved"}
+        if self.allow_all_tools:
+            logger.info(f"✅ Auto-approved (allow_all mode): {kind.value}")
+            return PermissionRequestResult(kind="approved")
+
+        # Safe read-only / non-destructive operations — always auto-approve.
+        if kind in (
+            PermissionRequestKind.READ,
+            PermissionRequestKind.URL,
+            PermissionRequestKind.MEMORY,
+        ):
+            logger.info(f"✅ Auto-approved safe kind: {kind.value}")
+            return PermissionRequestResult(kind="approved")
+
+        # SHELL, WRITE, and MCP all require user approval below.
+        if kind == PermissionRequestKind.MCP:
+            display_name = f"mcp:{request.server_name}/{request.tool_name}"
+            display_args: dict = request.args or {}
+        else:
+            display_name = request.tool_name or kind.value
+            display_args = request.args or {}
+
+        _denied = PermissionRequestResult(
+            kind="denied-no-approval-rule-and-could-not-request-from-user"
+        )
+
+        # Check session-wide approval granted earlier this session.
+        # Only the specific display_name is stored (not the generic kind.value),
+        # so the lookup is an exact match against the approved tool name.
+        if display_name in self._session_approved_tools:
+            logger.info(f"✅ Auto-approved (session rule): {display_name}")
+            return PermissionRequestResult(kind="approved")
+
+        if not self.interaction_callback:
+            logger.warning(
+                f"🔴 No interaction_callback — denying {kind.value}: {display_name}"
+            )
+            return _denied
+
+        try:
+            logger.info(
+                f"🔔 Requesting user permission for {kind.value}: {display_name}"
+            )
+            # Always offer session approval for destructive kinds (SHELL, WRITE, MCP).
+            # The CLI rarely sets canOfferSessionApproval for these kinds.
+            can_session = kind in (
+                PermissionRequestKind.SHELL,
+                PermissionRequestKind.WRITE,
+                PermissionRequestKind.MCP,
+            ) or bool(getattr(request, "can_offer_session_approval", False))
+            perm_req = _PermissionRequest(
+                display_name,
+                display_args,
+                can_offer_session_approval=can_session,
+            )
+
+            result = await asyncio.wait_for(
+                self.interaction_callback("permission", perm_req),
+                timeout=PERMISSION_TIMEOUT,
+            )
+
+            if result == "allow_session":
+                # Store only the specific tool display_name so that
+                # approving "bash" does not silently approve "sh", "zsh",
+                # or any other tool that shares the same generic kind value.
+                self._session_approved_tools.add(display_name)
+                logger.info(f"✅ User approved for session: {display_name}")
+                return PermissionRequestResult(kind="approved")
+
+            if result == "allow":
+                logger.info(f"✅ User approved {kind.value}: {display_name}")
+                return PermissionRequestResult(kind="approved")
+
+            logger.info(f"❌ User denied {kind.value}: {display_name}")
+            return PermissionRequestResult(kind="denied-interactively-by-user")
+
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            logger.warning(
+                f"⏱️ Permission timeout or cancellation, denying"
+                f" {kind.value}: {display_name}"
+            )
+            return _denied
+        except Exception as e:
+            logger.error(f"❌ Permission request failed: {e}", exc_info=True)
+            return _denied
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
         tool_name = input_data.get("toolName", "unknown")
-        tool_args = input_data.get("toolArgs", {})
 
         # Auto-approve when allow_all_tools is enabled
         if self.allow_all_tools:
@@ -665,36 +760,34 @@ class SessionMixin:
             logger.info(f"✅ Auto-approved allowlisted tool: {tool_name}")
             return {"permissionDecision": "allow"}
 
-        # Ask user for permission via interaction callback.
-        # Deny-by-default is safe here: interaction_callback is only None outside
-        # of an active chat() call, when no tool execution should be happening.
-        if not self.interaction_callback:
-            logger.warning(
-                f"🔴 No interaction_callback registered — denying tool: {tool_name}"
-            )
-            return {"permissionDecision": "deny"}
+        # Check session-wide approval.
+        if tool_name in self._session_approved_tools:
+            logger.info(f"✅ Auto-approved (session rule): {tool_name}")
+            return {"permissionDecision": "allow"}
 
-        try:
-            logger.info(f"🔔 Requesting user permission for tool: {tool_name}")
-            request = _PermissionRequest(tool_name, tool_args)
+        # For MCP tools, also check the composite "mcp:{server}/{tool}"
+        # key that _on_permission_request stores on "allow_session".
+        server_name = input_data.get("serverName", "")
+        if server_name:
+            mcp_key = f"mcp:{server_name}/{tool_name}"
+            if mcp_key in self._session_approved_tools:
+                logger.info(f"✅ Auto-approved (session rule, MCP): {mcp_key}")
+                return {"permissionDecision": "allow"}
 
-            result = await asyncio.wait_for(
-                self.interaction_callback("permission", request),
-                timeout=PERMISSION_TIMEOUT,
-            )
-
-            decision = "allow" if result else "deny"
-            logger.info(
-                f"{'✅' if decision == 'allow' else '❌'} User {decision}ed tool: {tool_name}"
-            )
-            return {"permissionDecision": decision}
-
-        except asyncio.TimeoutError:
-            logger.warning(f"⏱️ Permission request timeout, denying: {tool_name}")
-            return {"permissionDecision": "deny"}
-        except Exception as e:
-            logger.error(f"❌ Permission request failed: {e}", exc_info=True)
-            return {"permissionDecision": "deny"}
+        # For non-allowlisted tools, defer to the permission system
+        # (PERMISSION_REQUESTED event → _on_permission_request → user prompt).
+        # Returning "ask" tells the CLI to fire PERMISSION_REQUESTED normally.
+        # This avoids a double-prompt race where both hooks fire concurrently
+        # for the same bash/create call.
+        #
+        # ARCHITECTURAL NOTE (github-copilot-sdk==0.1.32):
+        # The "ask" permissionDecision value was introduced in SDK ≥0.1.28.
+        # If the SDK is downgraded below that version this return value will
+        # silently fall-through to allow, creating a fail-open security hole.
+        # Always pin github-copilot-sdk in pyproject.toml to a version that
+        # supports "ask" (currently pinned at ==0.1.32).
+        logger.info(f"🔔 Deferring to permission system for tool: {tool_name}")
+        return {"permissionDecision": "ask"}
 
     async def _refresh_git_info(self):
         """Re-query git branch/status and update session_info (3s timeout)."""

@@ -103,7 +103,20 @@ async def _handle_interaction_callback(query, update, context):
     if future and not future.done():
         try:
             if action_type == "perm":
-                result = value == "allow"
+                # Resolve with a Literal string so _on_permission_request
+                # can use exhaustive equality checks instead of truthy tests.
+                if value == "allow_session":
+                    result: str = "allow_session"
+                    action_emoji = "✓✓"
+                    action_text = "Allow (session)"
+                elif value == "allow":
+                    result = "allow"
+                    action_emoji = "✓"
+                    action_text = "Allow"
+                else:
+                    result = "deny"
+                    action_emoji = "✕"
+                    action_text = "Deny"
                 logger.info(f"✅ Resolving permission future with: {result}")
                 future.set_result(result)
                 # Extract tool name from stored interaction data
@@ -112,8 +125,6 @@ async def _handle_interaction_callback(query, update, context):
                     if isinstance(interaction_data, dict)
                     else "Tool"
                 )
-                action_emoji = "✓" if value == "allow" else "✕"
-                action_text = "Allow" if value == "allow" else "Deny"
                 decision_line = (
                     f"🛡️ Permission: {tool_name} → {action_text} {action_emoji}"
                 )

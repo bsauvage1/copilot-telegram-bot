@@ -129,12 +129,7 @@ async def post_init(application):
 
     if ALLOWED_USER_ID:
         try:
-            selector_text, selector_kb = await build_start_menu()
-            await application.bot.send_message(
-                chat_id=ALLOWED_USER_ID, text=selector_text, reply_markup=selector_kb
-            )
-
-            # Set up session end notification callback
+            # Set up session end notification callback before starting service
             async def notify_session_end(msg: str):
                 try:
                     await application.bot.send_message(
@@ -144,6 +139,22 @@ async def post_init(application):
                     logger.error(f"Failed to send session end notification: {e}")
 
             service.session_end_callback = notify_session_end
+
+            # Start the Copilot service immediately so a session is live before
+            # the user selects a project (restores pre-refactor behaviour).
+            try:
+                await service.start()
+            except Exception as e:
+                logger.error(f"Service pre-start failed: {e}", exc_info=True)
+                await application.bot.send_message(
+                    chat_id=ALLOWED_USER_ID,
+                    text=("⚠️ Service failed to pre-start — select a project to retry"),
+                )
+
+            selector_text, selector_kb = await build_start_menu()
+            await application.bot.send_message(
+                chat_id=ALLOWED_USER_ID, text=selector_text, reply_markup=selector_kb
+            )
         except Exception as e:
             logger.error(f"Startup menu failed to send: {e}", exc_info=True)
 

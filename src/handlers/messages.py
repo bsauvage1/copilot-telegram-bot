@@ -194,79 +194,119 @@ async def chat_handler(
             f"⚡ Interaction created: {interaction_id} | Kind: {kind} | Chat: {chat_id}"
         )
 
-        try:
-            if kind == "permission":
-                tool_name = getattr(payload, "tool_name", "unknown")
-                args = getattr(payload, "arguments", {})
+        if kind == "permission":
+            tool_name = getattr(payload, "tool_name", "unknown")
+            args = getattr(payload, "arguments", {})
+            can_session = getattr(payload, "can_offer_session_approval", False)
 
-                # Plain text permission request (no markdown)
-                msg_text = f"🛡️ Permission: {tool_name}"
+            # Plain text permission request (no markdown)
+            msg_text = f"🛡️ Permission: {tool_name}"
 
-                # Add args preview if present
-                if args and len(str(args)) > 0:
-                    args_preview = str(args)[:80]
-                    suffix = "..." if len(str(args)) > 80 else ""
-                    msg_text += f"\nArguments: {args_preview}{suffix}"
+            # Add args preview if present
+            if args and len(str(args)) > 0:
+                args_preview = str(args)[:80]
+                suffix = "..." if len(str(args)) > 80 else ""
+                msg_text += f"\nArguments: {args_preview}{suffix}"
 
-                msg_text += "\n\nAllow?"
-                # Store tool_name in interaction_data for later reference
-                PENDING_INTERACTIONS[interaction_id]["tool_name"] = tool_name
-                buttons = [
-                    [
-                        InlineKeyboardButton(
-                            "✅ Allow", callback_data=f"perm:{interaction_id}:allow"
-                        ),
-                        InlineKeyboardButton(
-                            "❌ Deny", callback_data=f"perm:{interaction_id}:deny"
-                        ),
-                    ]
-                ]
-                await sender.pause_stream()
-                await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
-
-            elif kind == "input":
-                prompt = getattr(payload, "message", str(payload))
-                options = getattr(payload, "options", [])
-
-                # Plain text prompt (no markdown)
-                msg_text = f"❓ Copilot Asks:\n{prompt}\n\nSelect an option:"
-                buttons = []
-                for i, opt in enumerate(options):
-                    label = str(opt)
-                    btn_label = (label[:30] + "..") if len(label) > 30 else label
-                    callback_data = f"input:{interaction_id}:{label}"
-                    if len(callback_data.encode("utf-8")) > 64:
-                        callback_data = f"input:{interaction_id}:{i}"
-                    buttons.append(
-                        [InlineKeyboardButton(btn_label, callback_data=callback_data)]
-                    )
+            msg_text += "\n\nAllow?"
+            # Store tool_name in interaction_data for later reference
+            PENDING_INTERACTIONS[interaction_id]["tool_name"] = tool_name
+            allow_row = [
+                InlineKeyboardButton(
+                    "✅ Allow", callback_data=f"perm:{interaction_id}:allow"
+                ),
+                InlineKeyboardButton(
+                    "❌ Deny", callback_data=f"perm:{interaction_id}:deny"
+                ),
+            ]
+            buttons = [allow_row]
+            if can_session:
                 buttons.append(
                     [
                         InlineKeyboardButton(
-                            "❌ Cancel", callback_data=f"input:{interaction_id}:cancel"
+                            "✅ Allow (session)",
+                            callback_data=(f"perm:{interaction_id}:allow_session"),
                         )
                     ]
                 )
-                await sender.pause_stream()
-                await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
-
+            await sender.pause_stream()
             logger.info(
-                f"⏳ Awaiting user response for interaction {interaction_id}..."
+                f"🔔 Sending permission button | id={interaction_id}"
+                f" tool={tool_name} chat_id={chat_id}"
+                f" has_update_msg="
+                f"{update.message is not None if update else False}"
             )
+            perm_msg = await _send_interaction_msg(
+                update, context, chat_id, msg_text, buttons
+            )
+            if perm_msg is not None:
+                PENDING_INTERACTIONS[interaction_id]["message_id"] = perm_msg.message_id
+            logger.info(f"✅ Permission button sent | id={interaction_id}")
+
+        elif kind == "input":
+            prompt = getattr(payload, "message", str(payload))
+            options = getattr(payload, "options", [])
+
+            # Plain text prompt (no markdown)
+            msg_text = f"❓ Copilot Asks:\n{prompt}\n\nSelect an option:"
+            buttons = []
+            for i, opt in enumerate(options):
+                label = str(opt)
+                btn_label = (label[:30] + "..") if len(label) > 30 else label
+                callback_data = f"input:{interaction_id}:{label}"
+                if len(callback_data.encode("utf-8")) > 64:
+                    callback_data = f"input:{interaction_id}:{i}"
+                buttons.append(
+                    [InlineKeyboardButton(btn_label, callback_data=callback_data)]
+                )
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        "❌ Cancel",
+                        callback_data=f"input:{interaction_id}:cancel",
+                    )
+                ]
+            )
+            await sender.pause_stream()
+            await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
+
+        logger.info(f"⏳ Awaiting user response for interaction {interaction_id}...")
+        _interaction_expired = False
+        try:
             result = await asyncio.wait_for(future, timeout=INTERACTION_TTL)
             logger.info(f"✅ User response received for {interaction_id}: {result}")
             return result
 
         except asyncio.TimeoutError:
+            _interaction_expired = True
             logger.error(f"⏱️ Interaction {interaction_id} timed out")
-            PENDING_INTERACTIONS.pop(interaction_id, None)
-            return False if kind == "permission" else "cancel"
+            return "deny" if kind == "permission" else "cancel"
         except Exception as e:
-            logger.error(f"❌ Interaction {interaction_id} failed: {e}", exc_info=True)
+            _interaction_expired = True
+            logger.error(
+                f"❌ Interaction {interaction_id} failed: {e}",
+                exc_info=True,
+            )
+            return "deny" if kind == "permission" else "cancel"
+        finally:
+            # Remove stale inline keyboard when interaction expires so the
+            # Telegram buttons do not remain active with no feedback.
+            if _interaction_expired and kind == "permission":
+                _idata = PENDING_INTERACTIONS.get(interaction_id, {})
+                _msg_id = _idata.get("message_id") if isinstance(_idata, dict) else None
+                if _msg_id and chat_id and context:
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=_msg_id,
+                            text="🛡️ Permission request expired.",
+                        )
+                    except Exception:
+                        pass
+            # Always clean up — covers normal return, timeout, exception,
+            # and CancelledError (raised when _on_permission_request's outer
+            # wait_for fires and cancels this coroutine).
             PENDING_INTERACTIONS.pop(interaction_id, None)
-            return False if kind == "permission" else "cancel"
-
-    # ---- Execute chat ----
 
     _streaming_token = streaming_mode.set(service.streaming_enabled)
     try:
@@ -280,13 +320,21 @@ async def chat_handler(
             attachments=attachments,
         )
 
-        # Wait for completion signal
+        # Wait for completion signal.
+        # _finalize_session_idle (triggered by SESSION_IDLE) runs as a
+        # create_task and first awaits _refresh_git_info (≤3 s), so the
+        # completion_event can take up to ~4 s to be set.  The event loop may
+        # also have a backlog of pending delta-stream tasks.  15 s gives
+        # enough headroom without introducing a noticeable delay on the happy
+        # path (the event fires immediately once the callback runs).
         try:
-            # SDK fires SESSION_IDLE after all tool chains complete; 5s allows
-            # for multi-step tool chains and compaction events before we finalize.
-            await asyncio.wait_for(completion_event.wait(), timeout=5.0)
+            await asyncio.wait_for(completion_event.wait(), timeout=15.0)
         except asyncio.TimeoutError:
             logger.warning("Completion event timeout — proceeding")
+
+        # Yield to the event loop so any still-queued stream_delta tasks can
+        # finish editing the Telegram message before finalize_stream takes over.
+        await asyncio.sleep(0)
 
         # Build footer
         footer = ""
@@ -367,23 +415,28 @@ async def chat_handler(
 
 
 async def _send_interaction_msg(update, context, chat_id, text, buttons):
-    """Send an inline-keyboard message, with fallback to context.bot.send_message."""
+    """Send an inline-keyboard message via bot.send_message, fallback to reply.
+
+    Returns the sent :class:`telegram.Message` so callers can store the
+    message_id for later keyboard removal on timeout.
+    """
     markup = InlineKeyboardMarkup(buttons)
+    # Prefer context.bot.send_message — works regardless of update.message state
+    if chat_id and context:
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=text, reply_markup=markup
+            )
+            return msg
+        except Exception as send_err:
+            logger.error(f"❌ bot.send_message failed: {send_err}", exc_info=True)
+    # Fallback: reply to the original message
     try:
-        await update.message.reply_text(text, reply_markup=markup)
-    except Exception as send_err:
+        msg = await update.message.reply_text(text, reply_markup=markup)
+        return msg
+    except Exception as fallback_err:
         logger.error(
-            f"❌ Failed to send interaction message: {send_err}", exc_info=True
+            f"❌ reply_text fallback also failed: {fallback_err}",
+            exc_info=True,
         )
-        if chat_id and context:
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id, text=text, reply_markup=markup
-                )
-            except Exception as fallback_err:
-                logger.error(
-                    f"❌ Fallback send also failed: {fallback_err}", exc_info=True
-                )
-                raise
-        else:
-            raise
+        raise

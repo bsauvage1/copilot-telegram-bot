@@ -292,21 +292,35 @@ class MessageSender:
         if not chunks:
             chunks = ["_(empty response)_"]
 
-        # For single-chunk responses, edit the live card in place — avoids the
-        # "card disappears then reappears" flash that delete+resend causes.
-        if msg and len(chunks) == 1:
+        # Edit the live streaming card in place as the first chunk — avoids the
+        # "card disappears then reappears" flash and prevents content loss if
+        # subsequent sends fail (the first chunk is always visible).
+        first_chunk_sent = False
+        if msg:
             safe = self._ensure_safe_markdown(chunks[0])
             if await self._edit_message(msg, safe):
-                return
+                first_chunk_sent = True
+                remaining = chunks[1:]
+            else:
+                # Edit failed — delete preview only after we've sent at least
+                # chunk 0 as a new message, so content is never invisible.
+                remaining = chunks
 
-        # Multi-chunk or edit failed: delete the preview and send as new messages
-        if msg:
-            try:
-                await asyncio.wait_for(msg.delete(), timeout=2.0)
-            except Exception:
-                pass
+        if not msg:
+            remaining = chunks
 
-        for chunk in chunks:
+        if not first_chunk_sent:
+            # Send chunk 0 first, THEN delete the stale preview
+            safe = self._ensure_safe_markdown(remaining[0])
+            await self._send_message(safe)
+            remaining = remaining[1:]
+            if msg:
+                try:
+                    await asyncio.wait_for(msg.delete(), timeout=2.0)
+                except Exception:
+                    pass
+
+        for chunk in remaining:
             safe = self._ensure_safe_markdown(chunk)
             await self._send_message(safe)
 
@@ -522,9 +536,14 @@ class MessageSender:
             else:
                 logger.error(f"❌ send_message failed: {e}")
         except asyncio.TimeoutError:
-            # Don't fall back — message may have been delivered; avoid duplicates
-            logger.warning("⏱️ send_message timeout — skipping")
-            return None
+            if _retry_count >= 3:
+                logger.warning("⏱️ send_message timeout — max retries reached, skipping")
+                return None
+            logger.warning(
+                f"⏱️ send_message timeout (attempt {_retry_count + 1}), retrying..."
+            )
+            await asyncio.sleep(1.0 * (_retry_count + 1))
+            return await self._safe_send(text, _retry_count + 1)
         except Exception as e:
             logger.error(f"❌ send_message error: {e}")
             # Plain-text fallback for definite local errors only

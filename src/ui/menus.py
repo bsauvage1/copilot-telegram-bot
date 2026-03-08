@@ -446,12 +446,7 @@ def get_cockpit_content(
     model_line = f"🤖 /model: {model}" + (f" [{effort}]" if effort else "") + "\n"
     mode_map = {"Chat": "interactive", "Plan": "plan", "Autopilot": "autopilot"}
     mode_value = mode_map.get(mode, mode.lower())
-    mode_suffix = (
-        f" ({'full' if allow_all_tools else 'limited'} permissions)"
-        if mode == "Autopilot"
-        else ""
-    )
-    mode_line = f"⚙️ /autopilot: {mode_value}{mode_suffix}\n"
+    mode_line = f"⚙️ /autopilot: {mode_value}\n"
     if mcp_total:
         mcp_line = f"🔌 /mcp: {mcp_enabled} active · {mcp_total} available\n"
     else:
@@ -475,6 +470,11 @@ def get_cockpit_content(
         else ""
     )
     agent_line = f"🧠 /agent: {agent_label}{agent_suffix}\n"
+    allow_line = (
+        "🔓 /yolo: ENABLED (all tools auto-approved)\n"
+        if allow_all_tools
+        else "🔒 /yolo: off (prompting per tool)\n"
+    )
     streaming_line = f"📡 /streamer_mode: {'enabled' if streaming else 'disabled'}\n"
     if extra_dirs:
         dirs_lines = "\n".join(f"  • {d}" for d in extra_dirs)
@@ -491,6 +491,7 @@ def get_cockpit_content(
         f"{mcp_line}"
         f"{skills_line}"
         f"{streaming_line}"
+        f"{allow_line}"
         f"{session_line}"
         f"📂 Workspace: {path}\n"
         f"{extra_dirs_line}"

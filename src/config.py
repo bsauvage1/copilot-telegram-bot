@@ -8,8 +8,7 @@ load_dotenv(override=True)
 
 # Logging Setup
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -17,7 +16,9 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 _raw_user_id = os.getenv("ALLOWED_USER_ID")
 ALLOWED_USER_ID: int | None = int(_raw_user_id) if _raw_user_id else None
-WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+WORKSPACE_ROOT = os.getenv(
+    "WORKSPACE_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # Optional: overrides CLI auth
 
 # Resolve Workspace Root
@@ -25,7 +26,9 @@ WORKSPACE_PATH = Path(WORKSPACE_ROOT).resolve()
 
 # Granted Projects (comma-separated absolute paths)
 GRANTED_PROJECTS_STR = os.getenv("GRANTED_PROJECTS", "")
-GRANTED_PROJECT_PATHS = [Path(p.strip()).resolve() for p in GRANTED_PROJECTS_STR.split(",") if p.strip()]
+GRANTED_PROJECT_PATHS = [
+    Path(p.strip()).resolve() for p in GRANTED_PROJECTS_STR.split(",") if p.strip()
+]
 
 # Validate and log granted projects
 for gp in GRANTED_PROJECT_PATHS:
@@ -48,11 +51,10 @@ else:
 
 # ── Shared Constants ──────────────────────────────────────────────────────────
 
-DEFAULT_MODEL = "gpt-4.1"          # model used when user hasn't chosen one
-INTERACTION_TIMEOUT = 300          # seconds — timeout for user interactions (permission, input)
-CHAT_TIMEOUT = 600                 # seconds — overall timeout for a single chat round-trip
-MAX_TRACKED_FILES = 200            # max files tracked in SessionContext before pruning
-TRACKED_FILES_PRUNE_SIZE = 100     # keep last N files when pruning
-FILE_CONTENT_LIMIT = 100_000       # max characters when reading file content
-TELEGRAM_MSG_LIMIT = 3500          # safe margin below Telegram's 4096 char limit
-PERMISSION_TIMEOUT = 60.0          # seconds — timeout for tool permission requests
+DEFAULT_MODEL = "gpt-4.1"  # model used when user hasn't chosen one
+INTERACTION_TIMEOUT = 300  # seconds — timeout for user interactions (permission, input)
+MAX_TRACKED_FILES = 200  # max files tracked in SessionContext before pruning
+TRACKED_FILES_PRUNE_SIZE = 100  # keep last N files when pruning
+FILE_CONTENT_LIMIT = 100_000  # max characters when reading file content
+TELEGRAM_MSG_LIMIT = 3500  # safe margin below Telegram's 4096 char limit
+PERMISSION_TIMEOUT = 120.0  # seconds — timeout for tool permission requests
