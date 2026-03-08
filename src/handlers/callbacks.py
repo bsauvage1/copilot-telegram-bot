@@ -309,15 +309,48 @@ async def _handle_session_callback(query, context):
 
 async def _handle_sessions_all_callback(query, context):
     """Show sessions from all projects (no CWD filter)."""
-    from src.ui.menus import get_sessions_keyboard
+    from src.ui.menus import get_sessions_keyboard, get_visible_sessions
+    from src.core.titler import ensure_session_titles
 
     await query.edit_message_text("🔄 Fetching all sessions...")
     try:
+        sessions = await service.client.list_sessions()
+        visible = get_visible_sessions(sessions, cwd_filter=None)
+        await query.edit_message_text(
+            "🔄 Fetching all sessions... generating missing titles"
+        )
+        await ensure_session_titles(visible)
+        # Re-fetch so session objects carry the freshly written summaries
         sessions = await service.client.list_sessions()
         header, keyboard = get_sessions_keyboard(sessions, cwd_filter=None)
         await query.edit_message_text(f"📋 {header}", reply_markup=keyboard)
     except Exception as e:
         logger.error(f"sessions_all failed: {e}")
+        await query.edit_message_text(f"⚠️ Failed: {e}")
+
+
+async def _handle_sessions_more_callback(query, context, page: int = 0):
+    """Show paginated button-list of recent sessions."""
+    from src.ui.menus import get_sessions_text_page, _SESSIONS_MORE_PAGE_SIZE
+    from src.core.titler import ensure_session_titles
+
+    await query.edit_message_text("🔄 Loading sessions...")
+    try:
+        sessions = await service.client.list_sessions()
+        sorted_sessions = sorted(
+            sessions,
+            key=lambda s: getattr(s, "modifiedTime", "") or "",
+            reverse=True,
+        )
+        page_size = _SESSIONS_MORE_PAGE_SIZE
+        start = page * page_size
+        visible = sorted_sessions[start : start + page_size]
+        await ensure_session_titles(visible)
+        sessions = await service.client.list_sessions()
+        text, keyboard = get_sessions_text_page(sessions, page=page)
+        await query.edit_message_text(text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"sessions_more failed: {e}")
         await query.edit_message_text(f"⚠️ Failed: {e}")
 
 
@@ -924,6 +957,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_ls_callback(query, context)
         elif data == "sessions_all":
             await _handle_sessions_all_callback(query, context)
+        elif data == "sessions_more" or data.startswith("sessions_more:"):
+            page = int(data.split(":")[1]) if ":" in data else 0
+            await _handle_sessions_more_callback(query, context, page)
         elif data.startswith("model:"):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):

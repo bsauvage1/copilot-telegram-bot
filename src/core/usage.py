@@ -1,4 +1,5 @@
 """Session usage tracking — accumulates metrics from SDK events."""
+
 import time
 import logging
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ModelUsage:
     """Track usage metrics for a single model."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -25,6 +27,7 @@ class ModelUsage:
 @dataclass
 class QuotaUsage:
     """Track quota usage percentages from SDK events."""
+
     chat_remaining_percentage: Optional[str] = None
     completion_remaining_percentage: Optional[str] = None
     premium_remaining_percentage: Optional[str] = None
@@ -34,21 +37,22 @@ def _parse_quota_percentage(quota_snapshot) -> str:
     """Parse quota snapshot to get remaining percentage or 'Unlimited'."""
     if not quota_snapshot:
         return "N/A"
-    
+
     is_unlimited = getattr(quota_snapshot, "is_unlimited_entitlement", False)
     if is_unlimited:
         return "Unlimited"
-    
+
     remaining = getattr(quota_snapshot, "remaining_percentage", None)
     if remaining is not None:
         return f"{remaining:.1f}%"
-    
+
     return "N/A"
 
 
 @dataclass
 class SessionInfo:
     """Session metadata captured from SDK events."""
+
     session_id: Optional[str] = None
     name: Optional[str] = None  # Summary from SessionMetadata
     created: Optional[str] = None  # ISO format string from SDK
@@ -62,12 +66,12 @@ class SessionInfo:
     repository: Optional[str] = None
     status: str = "Active"
     workspace_path: Optional[str] = None
-    
+
     def duration(self) -> str:
         """Calculate session duration as formatted string."""
         if not self.created:
             return "N/A"
-        
+
         try:
             # Parse ISO format string from SDK
             start = datetime.fromisoformat(self.created)
@@ -75,7 +79,7 @@ class SessionInfo:
             dur = (now - start).total_seconds()
             h, m = int(dur // 3600), int((dur % 3600) // 60)
             s = int(dur % 60)
-            
+
             if h:
                 return f"{h}h {m}m {s}s"
             elif m:
@@ -93,6 +97,7 @@ class SessionUsageTracker:
     Subscribes to session events via ``session.on(tracker.handle_event)`` and
     accumulates per-model token breakdowns, quota snapshots, and session timing.
     """
+
     session_start_time: Optional[float] = None
     current_tokens: int = 0
     token_limit: int = 0
@@ -110,7 +115,7 @@ class SessionUsageTracker:
         if etype == SessionEventType.SESSION_START:
             self.session_start_time = time.time()
             # Capture SDK-selected model
-            selected = getattr(event.data, 'selected_model', None)
+            selected = getattr(event.data, "selected_model", None)
             if selected:
                 self._selected_model = selected
 
@@ -121,35 +126,59 @@ class SessionUsageTracker:
 
         elif etype == SessionEventType.ASSISTANT_USAGE:
             logger.debug(f"ASSISTANT_USAGE event: {event.data}")
-            model = getattr(event.data, 'model', None) or "unknown"
+            model = getattr(event.data, "model", None) or "unknown"
             if model not in self.model_usage:
                 self.model_usage[model] = ModelUsage()
 
             usage = self.model_usage[model]
             usage.input_tokens += int(event.data.input_tokens or 0)
             usage.output_tokens += int(event.data.output_tokens or 0)
-            usage.cache_read_tokens += int(getattr(event.data, 'cache_read_tokens', 0) or 0)
-            usage.cache_write_tokens += int(getattr(event.data, 'cache_write_tokens', 0) or 0)
-            usage.cost += float(getattr(event.data, 'cost', 0) or 0)
+            usage.cache_read_tokens += int(
+                getattr(event.data, "cache_read_tokens", 0) or 0
+            )
+            usage.cache_write_tokens += int(
+                getattr(event.data, "cache_write_tokens", 0) or 0
+            )
+            usage.cost += float(getattr(event.data, "cost", 0) or 0)
             usage.requests += 1
-            usage.api_duration_ms += int(getattr(event.data, 'duration', 0) or 0)
+            usage.api_duration_ms += int(getattr(event.data, "duration", 0) or 0)
 
             # Update quota snapshots and parse into QuotaUsage
-            snapshots = getattr(event.data, 'quota_snapshots', None)
+            snapshots = getattr(event.data, "quota_snapshots", None)
             if snapshots:
                 self.latest_quota = snapshots
                 # Parse quota snapshots into structured QuotaUsage
                 # Handle both dict and object access patterns
-                chat_snap = snapshots.get("chat") if isinstance(snapshots, dict) else getattr(snapshots, "chat", None)
-                completions_snap = snapshots.get("completions") if isinstance(snapshots, dict) else getattr(snapshots, "completions", None)
-                premium_snap = snapshots.get("premium_interactions") if isinstance(snapshots, dict) else getattr(snapshots, "premium_interactions", None)
-                
-                self.quota_usage.chat_remaining_percentage = _parse_quota_percentage(chat_snap)
-                self.quota_usage.completion_remaining_percentage = _parse_quota_percentage(completions_snap)
-                self.quota_usage.premium_remaining_percentage = _parse_quota_percentage(premium_snap)
+                chat_snap = (
+                    snapshots.get("chat")
+                    if isinstance(snapshots, dict)
+                    else getattr(snapshots, "chat", None)
+                )
+                completions_snap = (
+                    snapshots.get("completions")
+                    if isinstance(snapshots, dict)
+                    else getattr(snapshots, "completions", None)
+                )
+                premium_snap = (
+                    snapshots.get("premium_interactions")
+                    if isinstance(snapshots, dict)
+                    else getattr(snapshots, "premium_interactions", None)
+                )
+
+                self.quota_usage.chat_remaining_percentage = _parse_quota_percentage(
+                    chat_snap
+                )
+                self.quota_usage.completion_remaining_percentage = (
+                    _parse_quota_percentage(completions_snap)
+                )
+                self.quota_usage.premium_remaining_percentage = _parse_quota_percentage(
+                    premium_snap
+                )
 
         elif etype == SessionEventType.SESSION_SHUTDOWN:
-            self.total_premium_requests = float(getattr(event.data, 'total_premium_requests', 0) or 0)
+            self.total_premium_requests = float(
+                getattr(event.data, "total_premium_requests", 0) or 0
+            )
 
     # ------------------------------------------------------------------
     # Derived helpers
@@ -169,20 +198,22 @@ class SessionUsageTracker:
             return None
         parts = []
         for key, snap in self.latest_quota.items():
-            is_unlimited = getattr(snap, 'is_unlimited_entitlement', False)
+            is_unlimited = getattr(snap, "is_unlimited_entitlement", False)
             if is_unlimited:
                 parts.append(f"{key}: Unlimited")
             else:
-                pct = getattr(snap, 'remaining_percentage', None)
+                pct = getattr(snap, "remaining_percentage", None)
                 if pct is not None:
                     parts.append(f"{key}: {pct:.0f}% remaining")
                 else:
-                    ent = getattr(snap, 'entitlement_requests', 0)
+                    ent = getattr(snap, "entitlement_requests", 0)
                     parts.append(f"{key}: {ent:.0f} remaining")
         return "\n".join(parts) if parts else None
-    
+
     def get_quota_summary(self) -> str:
-        """Return formatted quota summary with chat/completions/premium breakdown."""
+        """Return formatted quota summary, or "" if no quota data received yet."""
+        if not self.latest_quota:
+            return ""
         lines = [
             f"• Chat: {self.quota_usage.chat_remaining_percentage or 'N/A'}",
             f"• Completions: {self.quota_usage.completion_remaining_percentage or 'N/A'}",
@@ -195,9 +226,9 @@ class SessionUsageTracker:
         if not self.latest_quota:
             return None
         for _key, snap in self.latest_quota.items():
-            if getattr(snap, 'is_unlimited_entitlement', False):
+            if getattr(snap, "is_unlimited_entitlement", False):
                 return 100.0
-            pct = getattr(snap, 'remaining_percentage', None)
+            pct = getattr(snap, "remaining_percentage", None)
             if pct is not None:
                 return float(pct)
         return None
@@ -207,20 +238,26 @@ class SessionUsageTracker:
         from src.core.git import get_diff_shortstat
 
         total_api_ms = sum(u.api_duration_ms for u in self.model_usage.values())
-        session_time = (time.time() - self.session_start_time) if self.session_start_time else 0
-
         total_requests = sum(u.requests for u in self.model_usage.values())
         diff_stat = await get_diff_shortstat()
 
         lines = [
             f"• Total requests: {total_requests}",
-            f"• API time spent: {total_api_ms / 1000:.1f}s",
-            f"• Total session time: {self._format_duration(session_time)}",
-            f"• Unstaged changes: {diff_stat}" if diff_stat else "• Unstaged changes: N/A",
+            f"• API time: {self._format_duration(total_api_ms / 1000)}",
+            f"• Unstaged changes: {diff_stat}"
+            if diff_stat
+            else "• Unstaged changes: N/A",
         ]
 
         if self.current_tokens or self.token_limit:
-            lines.append(f"• Context tokens: {self.current_tokens}/{self.token_limit}")
+            pct = (
+                (self.current_tokens / self.token_limit * 100)
+                if self.token_limit
+                else 0
+            )
+            lines.append(
+                f"• Context tokens: {self.current_tokens}/{self.token_limit} ({pct:.0f}%)"
+            )
 
         lines.append("• Breakdown by AI model:")
 
@@ -228,9 +265,7 @@ class SessionUsageTracker:
             lines.append("  (No interactions yet)")
         else:
             for model, usage in self.model_usage.items():
-                lines.append(
-                    f"  {model}: {usage.requests} requests"
-                )
+                lines.append(f"  {model}: {usage.requests} requests")
 
         return "\n".join(lines)
 

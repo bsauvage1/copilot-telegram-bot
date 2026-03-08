@@ -364,11 +364,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self, cli_path: Optional[str], active_source: str
     ) -> str:
         """Get the version of the CLI actually in use."""
-        if (
-            self._is_running
-            and cli_path
-            and cli_path == self._active_cli_path
-        ):
+        if self._is_running and cli_path and cli_path == self._active_cli_path:
             try:
                 status = await self.client.get_status()
                 if hasattr(status, "version") and status.version:
@@ -745,11 +741,28 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             instructions_project=_proj_instr.exists()
             if (_proj_instr := project_instructions_path(self.session_info.cwd))
             else False,
+            session_summary=await self._get_session_summary(),
         )
 
     def get_directory_listing(self) -> str:
         """Returns flat list of current directory content."""
         return get_directory_listing(self.session_info.cwd)
+
+    async def _get_session_summary(self) -> str:
+        """Return the current session's title/summary from workspace.yaml.
+
+        Reads the persisted summary only — never triggers LLM generation.
+        Title generation is handled in the background by schedule_title_generation.
+        """
+        from src.core.titler import read_session_summary
+        from src.ui.menus import _clean_summary
+
+        sid = self.session_info.session_id
+        if not sid:
+            return ""
+        if self.session_info.name:
+            return _clean_summary(self.session_info.name)
+        return _clean_summary(read_session_summary(sid)) or ""
 
     def get_project_structure(self, max_depth: int = 2) -> str:
         """Returns nested project structure with file sizes."""
