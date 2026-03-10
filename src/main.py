@@ -48,6 +48,7 @@ from src.handlers.commands import (
     cockpit_command,
     skills_command,
     versions_command,
+    restart_command,
     build_start_menu,
 )
 from src.handlers.messages import chat_handler
@@ -99,6 +100,7 @@ async def setup_bot_commands(application):
         BotCommand("list_dirs", "List project + extra directories"),
         BotCommand("remove_dir", "Remove an extra directory"),
         BotCommand("ping", "Check CLI connection status"),
+        BotCommand("restart", "Restart the CLI, preserve the session"),
         BotCommand("versions", "Show local/runtime/latest versions + release notes"),
         BotCommand("update", "Update Copilot CLI"),
         BotCommand("streamer_mode", "Toggle live token streaming"),
@@ -222,6 +224,7 @@ def main():
     app.add_handler(CommandHandler("sessions", sessions_command))
     app.add_handler(CommandHandler("infinite", infinite_command))
     app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("restart", restart_command))
     app.add_handler(CommandHandler("versions", versions_command))
     app.add_handler(CommandHandler("compact", compact_command))
     app.add_handler(CommandHandler("review", review_command))

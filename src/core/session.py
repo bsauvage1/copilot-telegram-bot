@@ -1,6 +1,11 @@
 """Session lifecycle methods for CopilotService (mixin)."""
 
 import asyncio
+import contextlib
+import json
+import os
+import re
+import tempfile
 import time
 import uuid
 import logging
@@ -76,6 +81,74 @@ class _PermissionRequest:
         self.tool_name = name
         self.arguments = args
         self.can_offer_session_approval = can_offer_session_approval
+
+
+_SESSION_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def _patch_session_attachments(session_id: str) -> None:
+    """Fix legacy session files where attachments field is null instead of [].
+
+    The CLI binary serializes missing attachments as null, but newer SDK
+    versions require an array. Patch atomically before resuming so resume
+    doesn't fail with a -32603 corruption error.
+    """
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        logger.warning("Skipping patch — non-UUID session_id: %r", session_id)
+        return
+
+    base = (Path.home() / ".copilot" / "session-state").resolve()
+    session_dir = (base / session_id).resolve()
+    if not str(session_dir).startswith(str(base) + "/"):
+        logger.warning("Skipping patch — path escape for session_id: %r", session_id)
+        return
+
+    events_file = session_dir / "events.jsonl"
+    if not events_file.exists():
+        return
+
+    try:
+        original = events_file.read_text(encoding="utf-8")
+        lines = []
+        changed = False
+        for line in original.splitlines(keepends=True):
+            try:
+                obj = json.loads(line)
+                if (
+                    isinstance(obj, dict)
+                    and obj.get("data") is not None
+                    and isinstance(obj["data"], dict)
+                    and obj["data"].get("attachments") is None
+                    and "attachments" in obj["data"]
+                ):
+                    obj["data"]["attachments"] = []
+                    line = json.dumps(obj, ensure_ascii=False) + "\n"
+                    changed = True
+            except json.JSONDecodeError:
+                pass
+            lines.append(line)
+
+        if not changed:
+            return
+
+        patched = "".join(lines)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=session_dir, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(patched)
+            os.replace(tmp_path, events_file)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+
+        logger.info(
+            "Patched attachments:null -> [] in session %s events.jsonl", session_id
+        )
+    except Exception as exc:
+        logger.warning("Could not patch %s — resuming anyway: %s", events_file, exc)
 
 
 def _apply_agent_config(svc, cfg: dict) -> None:
@@ -385,6 +458,7 @@ class SessionMixin:
 
         _apply_agent_config(self, resume_config)
 
+        _patch_session_attachments(session_id)
         self.session = await self.client.resume_session(session_id, resume_config)
         self.current_model = model
         logger.info(f"✅ Session resumed: {session_id}")

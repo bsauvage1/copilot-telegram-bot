@@ -1421,6 +1421,39 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"🔴 Ping failed: {e}")
 
 
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hot-restart the Copilot CLI process, resuming the current session."""
+    if not await security_check(update):
+        return
+    msg = await update.message.reply_text("🔄 Restarting Copilot CLI...")
+    try:
+        # Capture current session ID before stopping so we can resume it
+        old_session_id = service.session.session_id if service.session else None
+        await service.stop()
+        # Re-create the client object pointing at the same CWD, then start fresh
+        service.client = service._create_client(Path(service.get_working_directory()))
+        await service.start()
+        # Resume the old session to restore memory, falling back to new session
+        if old_session_id:
+            try:
+                await service.resume_session_by_id(old_session_id)
+                status = "• Session memory preserved ✅"
+            except Exception as resume_err:
+                logger.warning(f"Session resume failed after restart: {resume_err}")
+                status = "• Session memory lost (resume failed) ⚠️"
+        else:
+            status = "• No prior session to resume"
+        await msg.edit_text(
+            "✅ Copilot CLI restarted\n"
+            "• CLI process restarted\n"
+            f"{status}\n"
+            f"• Project: {service.project_name or 'none'}"
+        )
+    except Exception as e:
+        logger.error(f"restart_command failed: {e}")
+        await msg.edit_text(f"❌ Restart failed: {e}\nTry /start to reconnect.")
+
+
 async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Compact context: resets session. Enable /infinite for auto-compaction."""
     if not await security_check(update):

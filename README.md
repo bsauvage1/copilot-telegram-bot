@@ -183,6 +183,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/cockpit` | Re-display the session status card (model, mode, agent, MCP, workspace, branch, stats). |
 | `/ping` | Check CLI connectivity and measure latency. |
+| `/restart` | Restart the Copilot CLI process (hot-restart). Tears down and restarts the CLI binary, preserving your project selection and current session. Useful when the CLI is stuck or unresponsive. |
 | `/versions` | Show machine/runtime/latest CLI+SDK versions with upgrade and release-note links. |
 | `/update` | Update the Copilot CLI binary. |
 

@@ -19,6 +19,7 @@ from src.config import (
     WORKSPACE_PATH,
     GITHUB_TOKEN,
     DEFAULT_MODEL,
+    CHAT_TIMEOUT,
 )
 from src.core.context import ctx
 from src.core.git import get_git_info as _get_git_info
@@ -803,13 +804,20 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.completion_callback = completion_callback
 
             try:
-                msg_options: dict = {"prompt": user_message}
-                if attachments:
-                    msg_options["attachments"] = attachments
-                await self.session.send_and_wait(msg_options)
+                msg_options: dict = {
+                    "prompt": user_message,
+                    "attachments": attachments or [],
+                }
+                await self.session.send_and_wait(msg_options, timeout=CHAT_TIMEOUT)
                 # abort() causes send_and_wait to return normally once session.idle fires
                 if self._cancelled:
                     raise asyncio.CancelledError("Request cancelled by user")
+            except asyncio.TimeoutError:
+                try:
+                    await self.session.abort()
+                except Exception as abort_err:
+                    logger.warning("abort() after timeout failed: %s", abort_err)
+                raise
             finally:
                 self.current_callback = None
                 self.delta_callback = None

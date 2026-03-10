@@ -414,6 +414,7 @@ def _command_reference() -> str:
         "🎛️ /cockpit - Show model, mode, agent…\n"
         "🧭 /versions - Show version intelligence\n"
         "🏓 /ping - Check CLI connection status\n"
+        "🔁 /restart - Restart CLI, resume session\n"
         "⬆️ /update - Update Copilot CLI\n"
     )
 
