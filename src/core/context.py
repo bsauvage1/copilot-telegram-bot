@@ -18,8 +18,10 @@ class SessionContext:
     def __init__(self):
         self.root_path: Path = WORKSPACE_PATH
         self.status_callback: Optional[Callable[[str], Any]] = None
+        self.notify_callback: Optional[Callable[[str], Any]] = None
         self.read_files: list[str] = []
         self.session_start_time: Optional[datetime] = None
+        self.pending_subagent_results: list[tuple[str, str]] = []
 
     def set_root(self, path: Path):
         self.root_path = path.resolve()

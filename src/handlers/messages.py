@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 
 from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
-from src.core.context import streaming_mode
+from src.core.context import streaming_mode, ctx
 from src.ui.streamer import MessageSender
 from src.core.titler import schedule_title_generation
 
@@ -34,7 +34,9 @@ _GENERAL_PROMPT = (
     "You are in GENERAL Mode.\n"
     "ROLE: You are an AI-powered coding assistant on a Telegram bot, built on the GitHub Copilot CLI.\n"
     "JOB: Help the user build, debug, and understand code using natural language, deeply integrated with the GitHub workflow.\n\n"
-    "RULES: No code blocks. Keep it scannable and mobile-friendly.\n\n"
+    "RULES: No code blocks. Keep it scannable and mobile-friendly.\n"
+    "RULE: Do NOT announce or acknowledge that background agents are running or starting. "
+    "Never say things like 'running...', 'I'll post results when done', or any progress notice for background agents. Delegate silently.\n\n"
     "FORMAT: Response must be PLAIN TEXT (no markdown code blocks, use simple bullets)."
     "---\n"
 )
@@ -145,6 +147,7 @@ async def chat_handler(
     completion_event = asyncio.Event()
     response_chunks: list[str] = []
     tool_event_count = 0  # Track tool events
+    ctx.pending_subagent_results = []  # Reset per-turn agent results
 
     # ---- Callbacks wired into service.chat() ----
 
@@ -355,6 +358,11 @@ async def chat_handler(
         else:
             full_response = "".join(response_chunks)
             await sender.send_response(full_response, footer)
+
+        # Send any background subagent results collected during this turn
+        for agent_name, agent_result in ctx.pending_subagent_results:
+            await sender.send_agent_result(agent_name, agent_result)
+        ctx.pending_subagent_results = []
 
         # Generate a model-based session title in the background (first turn only)
         session_id = getattr(getattr(service, "session_info", None), "session_id", None)

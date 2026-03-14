@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time as _time_mod
 
 from copilot.generated.session_events import SessionEventType
 
@@ -178,62 +179,177 @@ class EventHandlerMixin:
             logger.error(f"Error handling TOOL_EXECUTION_COMPLETE: {e}")
 
     def _on_subagent_started(self, event):
+        # Increment before try so it always fires even if display_name lookup fails
+        self._active_subagents += 1
+        epoch = self._turn_epoch
+        self._epoch_subagent_counts[epoch] = (
+            self._epoch_subagent_counts.get(epoch, 0) + 1
+        )
         try:
             display_name = getattr(event.data, "agent_display_name", None) or getattr(
                 event.data, "agent_name", "Agent"
             )
+            self._active_subagent_names.append(display_name)
+            logger.info(
+                f"SUBAGENT STARTED: {display_name} "
+                f"(active={self._active_subagents}, epoch={epoch})"
+            )
             msg = f"🤖 {display_name} started"
-            if ctx.status_callback:
-                self._dispatch_async(ctx.status_callback, msg)
-            logger.info(f"SUBAGENT STARTED: {display_name}")
+            cb = ctx.status_callback or ctx.notify_callback
+            if cb:
+                self._dispatch_async(cb, msg)
         except Exception as e:
             logger.error(f"Error handling SUBAGENT_STARTED: {e}")
 
     def _on_subagent_completed(self, event):
+        current_epoch = self._turn_epoch
+        if self._epoch_subagent_counts.get(current_epoch, 0) > 0:
+            # Normal path: completion belongs to the current turn.
+            self._epoch_subagent_counts[current_epoch] -= 1
+            if self._epoch_subagent_counts[current_epoch] == 0:
+                del self._epoch_subagent_counts[current_epoch]
+        else:
+            # Stale completion from a prior turn — decrement the global counter
+            # for accuracy but skip deferred-finalization logic for this turn.
+            stale_epochs = [
+                k for k, v in self._epoch_subagent_counts.items() if v > 0
+            ]
+            if stale_epochs:
+                stale = min(stale_epochs)
+                self._epoch_subagent_counts[stale] -= 1
+                if self._epoch_subagent_counts[stale] == 0:
+                    del self._epoch_subagent_counts[stale]
+                logger.debug(
+                    "Ignoring stale SUBAGENT_COMPLETED from epoch %d "
+                    "(current=%d)", stale, current_epoch,
+                )
+            else:
+                logger.debug(
+                    "Unexpected SUBAGENT_COMPLETED with no pending sub-agents "
+                    "(epoch=%d)", current_epoch,
+                )
+            self._active_subagents = max(0, self._active_subagents - 1)
+            return
+        self._active_subagents = max(0, self._active_subagents - 1)
         try:
             display_name = getattr(event.data, "agent_display_name", None) or getattr(
                 event.data, "agent_name", "Agent"
             )
+            if display_name in self._active_subagent_names:
+                self._active_subagent_names.remove(display_name)
+            logger.info(f"SUBAGENT COMPLETED: {display_name} (active={self._active_subagents})")
             result = getattr(event.data, "result", None)
             result_content = (
                 result.content if result and hasattr(result, "content") else None
             )
             if result_content:
-                # In streaming mode, keep snippet short for the Working card;
-                # the full result will appear in the final streamed response.
-                # In non-streaming mode, show full result (it's the only output users see).
-                snippet = (
-                    truncate_text(result_content, 120)
-                    if streaming_mode_var.get()
-                    else result_content
-                )
+                snippet = truncate_text(result_content, 120)
                 msg = f"✓ {display_name} → {snippet}"
+                # Store full result for post-finalization delivery.
+                ctx.pending_subagent_results.append(
+                    (display_name, result_content)
+                )
             else:
                 msg = f"✓ {display_name} completed"
-            if ctx.status_callback:
-                self._dispatch_async(ctx.status_callback, msg)
-            logger.info(f"SUBAGENT COMPLETED: {display_name}")
+            cb = ctx.status_callback or ctx.notify_callback
+            if cb:
+                self._dispatch_async(cb, msg)
         except Exception as e:
             logger.error(f"Error handling SUBAGENT_COMPLETED: {e}")
+        # Always check deferred finalization — must be outside the try/except so
+        # that a display/logging error cannot prevent completion_callback from firing.
+        # Use the epoch dict: finalize only when the CURRENT turn has no more
+        # pending sub-agents (prevents stale completions from triggering early).
+        current_epoch_pending = self._epoch_subagent_counts.get(
+            self._turn_epoch, 0
+        )
+        if current_epoch_pending == 0 and self._idle_deferred:
+            self._idle_deferred = False
+            self._dispatch_async(
+                self._finalize_session_idle,
+                self._deferred_status_cb,
+                self._deferred_completion_cb,
+            )
+
+    def _notify_new_bg_agents(self) -> None:
+        """Detect newly started background agents and notify via notify_callback."""
+        bt = self._background_tasks_snapshot
+        current_agents = getattr(bt, "agents", None) or []
+        current_keys: set[tuple[str, str]] = {
+            (
+                getattr(a, "agent_type", "") or "",
+                getattr(a, "description", "") or "",
+            )
+            for a in current_agents
+        }
+        new_keys = current_keys - self._known_bg_agent_keys
+        # Only update known-set when we have real data; a None/empty snapshot
+        # would otherwise clear it and cause duplicate notifications next time.
+        if current_agents:
+            self._known_bg_agent_keys = current_keys
+        if new_keys and ctx.notify_callback:
+            lines = [
+                f"• {k[0]}" + (f" — {k[1]}" if k[1] else "")
+                for k in sorted(new_keys)
+            ]
+            count = len(new_keys)
+            label = "agent" if count == 1 else "agents"
+            msg = f"🤖 {count} background {label} started:\n" + "\n".join(lines)
+            logger.info("Notifying user of new bg agents: %s", new_keys)
+            self._dispatch_async(ctx.notify_callback, msg)
 
     def _on_session_idle(self, event):
-        logger.info("⏸️ Session IDLE - Copilot finished")
-        # Schedule async task: refresh git info first, then fire callbacks
-        self._dispatch_async(self._finalize_session_idle)
+        # Capture background_tasks from the SDK event payload
+        self._background_tasks_snapshot = getattr(event.data, "background_tasks", None)
+        self._notify_new_bg_agents()
+        logger.info(
+            f"⏸️ Session IDLE - Copilot finished (active_subagents={self._active_subagents})"
+        )
+        if self._active_subagents > 0:
+            # Snapshot NOW — still inside send_and_wait, callbacks are live.
+            # chat()'s finally block will clear them before the subagents finish,
+            # so we capture here and trigger finalization from _on_subagent_completed.
+            self._deferred_status_cb = ctx.status_callback
+            self._deferred_completion_cb = self.completion_callback
+            self._idle_deferred = True
+            logger.info("⏸️ Deferring finalization — sub-agents still active")
+            return
+        # No sub-agents — snapshot and finalize immediately.
+        status_cb = ctx.status_callback
+        completion_cb = self.completion_callback
+        self._dispatch_async(self._finalize_session_idle, status_cb, completion_cb)
 
-    async def _finalize_session_idle(self):
+    async def _finalize_session_idle(self, status_cb, completion_cb):
         """Await git info refresh, then fire status/completion callbacks."""
-        await self._refresh_git_info()
-        if ctx.status_callback:
-            if asyncio.iscoroutinefunction(ctx.status_callback):
-                await ctx.status_callback("")
-            else:
-                ctx.status_callback("")
-        if self.completion_callback:
-            if asyncio.iscoroutinefunction(self.completion_callback):
-                await self.completion_callback()
-            else:
-                self.completion_callback()
+        t0 = _time_mod.monotonic()
+        try:
+            await self._refresh_git_info()
+        except Exception as e:
+            logger.error(f"[finalize] git_refresh failed: {e}", exc_info=True)
+        t1 = _time_mod.monotonic()
+        logger.debug(f"⏱️ [finalize] git_refresh={t1 - t0:.2f}s")
+        if status_cb:
+            try:
+                if asyncio.iscoroutinefunction(status_cb):
+                    await status_cb("")
+                else:
+                    status_cb("")
+            except Exception as e:
+                logger.error(f"[finalize] status_cb raised: {e}", exc_info=True)
+        t2 = _time_mod.monotonic()
+        logger.debug(f"⏱️ [finalize] status_callback={t2 - t1:.2f}s")
+        if completion_cb:
+            try:
+                if asyncio.iscoroutinefunction(completion_cb):
+                    await completion_cb()
+                else:
+                    completion_cb()
+            except Exception as e:
+                logger.error(f"[finalize] completion_cb raised: {e}", exc_info=True)
+        t3 = _time_mod.monotonic()
+        logger.info(
+            f"⏱️ [finalize] total={t3 - t0:.2f}s"
+        )
 
     def _on_session_error(self, event):
         error_msg = getattr(event.data, "message", None) or str(event.data)
@@ -296,11 +412,13 @@ class EventHandlerMixin:
     # ── Async dispatch helper ─────────────────────────────────────────
 
     def _dispatch_async(self, callback, *args):
-        """Fire-and-forget dispatch for async or sync callbacks."""
+        """Dispatch an async or sync callback, keeping a strong task reference."""
         try:
             loop = asyncio.get_running_loop()
             if asyncio.iscoroutinefunction(callback):
-                loop.create_task(callback(*args))
+                task = loop.create_task(callback(*args))
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
             else:
                 callback(*args)
         except Exception as e:

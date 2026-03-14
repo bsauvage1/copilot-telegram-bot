@@ -55,6 +55,13 @@ class MessageSender:
         """Send a separate permanent message for each tool event."""
         await self._send_message(detail)
 
+    async def send_agent_result(self, name: str, content: str):
+        """Send a background agent's full result, auto-splitting if needed."""
+        header = f"📋 {name}\n\n"
+        full = header + content
+        for chunk in self._split_message(full):
+            await self._send_message(chunk)
+
     async def update_working(self, detail: str):
         """Append tool status to the Working... card (streaming mode).
         Accumulates all events and shows a tail window so the card never exceeds
@@ -225,14 +232,27 @@ class MessageSender:
             # Keep the Working card as a permanent log — create a NEW message
             # for streaming content (don't reuse _working_msg).
             try:
+                _t_send = _time_mod.monotonic()
                 self._stream_msg = await self.chat.send_message(
                     safe, parse_mode=ParseMode.HTML
                 )
+                logger.debug(
+                    "⏱️ [stream] initial send_message="
+                    f"{_time_mod.monotonic() - _t_send:.2f}s"
+                )
+                self._stream_last_edit = _time_mod.monotonic()
+            except RetryAfter as e:
+                logger.warning(f"⚠️ Stream card rate-limited ({e.retry_after}s): {e}")
+                # Honour the mandatory back-off so the next delta doesn't immediately
+                # retry and hammer the endpoint (mirrors the edit-path handling below).
+                self._stream_last_edit = (
+                    _time_mod.monotonic() + e.retry_after - self._STREAM_DEBOUNCE
+                )
             except Exception as e:
-                logger.debug(f"Stream start failed: {e}")
+                logger.error(f"❌ Stream card creation failed: {e}")
+                self._stream_last_edit = _time_mod.monotonic()
             finally:
                 self._stream_creating = False
-                self._stream_last_edit = _time_mod.monotonic()
         else:
             try:
                 await asyncio.wait_for(
@@ -276,11 +296,23 @@ class MessageSender:
         await self._finalize_working_card()
 
         if not text or not text.strip():
+            logger.warning(
+                "finalize_stream: empty buffer — no content to send"
+                f" (msg={'set' if msg else 'None'})"
+            )
             if msg:
                 try:
-                    await asyncio.wait_for(msg.delete(), timeout=2.0)
+                    await asyncio.wait_for(
+                        msg.edit_text("<i>(no response)</i>", parse_mode=ParseMode.HTML),
+                        timeout=5.0,
+                    )
+                except (BadRequest, asyncio.TimeoutError):
+                    try:
+                        await asyncio.wait_for(msg.delete(), timeout=2.0)
+                    except Exception:
+                        pass
                 except Exception:
-                    pass
+                    pass  # RetryAfter or network error — leave card as-is
             return
 
         if footer:
@@ -535,6 +567,7 @@ class MessageSender:
                     logger.warning("Failed to send message as plain text")
             else:
                 logger.error(f"❌ send_message failed: {e}")
+                # Non-entity BadRequest errors are not fixed by dropping parse_mode.
         except asyncio.TimeoutError:
             if _retry_count >= 3:
                 logger.warning("⏱️ send_message timeout — max retries reached, skipping")
