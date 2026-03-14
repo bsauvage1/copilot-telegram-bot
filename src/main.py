@@ -24,6 +24,7 @@ from src.handlers.commands import (
     model_command,
     share_command,
     cancel_command,
+    tasks_command,
     session_command,
     diff_command,
     instructions_command,
@@ -59,6 +60,7 @@ from src.handlers.callbacks import (
     cancel_create_project,
     reject_command_during_creation,
 )
+from src.core.context import ctx
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ async def setup_bot_commands(application):
         BotCommand("clear", "Reset conversation memory"),
         BotCommand("compact", "Compact context (smart reset)"),
         BotCommand("cancel", "Cancel in-progress request"),
+        BotCommand("tasks", "Show running background agents and tasks"),
         BotCommand("share", "Export session to Markdown"),
         BotCommand("usage", "Display session usage metrics"),
         BotCommand("context", "Display model context info"),
@@ -141,6 +144,18 @@ async def post_init(application):
                     logger.error(f"Failed to send session end notification: {e}")
 
             service.session_end_callback = notify_session_end
+
+            # Proactive notification callback — used by the notify_user MCP tool
+            # so the CLI can push messages to Telegram at any time.
+            async def notify_user_proactive(msg: str):
+                try:
+                    await application.bot.send_message(
+                        chat_id=ALLOWED_USER_ID, text=msg
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send proactive notification: {e}")
+
+            ctx.notify_callback = notify_user_proactive
 
             # Start the Copilot service immediately so a session is live before
             # the user selects a project (restores pre-refactor behaviour).
@@ -211,6 +226,7 @@ def main():
     app.add_handler(CommandHandler("model", model_command))
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("tasks", tasks_command))
     app.add_handler(CommandHandler("session", session_command))
     app.add_handler(CommandHandler("diff", diff_command))
     app.add_handler(CommandHandler("instructions", instructions_command))

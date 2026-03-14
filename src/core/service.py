@@ -112,6 +112,19 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         self._chat_lock = asyncio.Lock()
         self._cancelled = False  # Set by /cancel to signal abort to chat_handler
+        self._active_subagents: int = 0  # Track running sub-agents to delay finalization
+        self._active_subagent_names: list[str] = []  # Display names of running sub-agents
+        self._idle_deferred: bool = False
+        self._deferred_status_cb: Optional[Callable] = None
+        self._deferred_completion_cb: Optional[Callable] = None
+        self._bg_tasks: set[asyncio.Task] = set()  # Strong refs to fire-and-forget tasks
+        self._background_tasks_snapshot: Any = None  # Latest BackgroundTasks from SESSION_IDLE
+        self._known_bg_agent_keys: set[tuple[str, str]] = set()  # Track known bg agents for change detection
+        self._turn_epoch: int = 0
+        # Per-epoch pending sub-agent counts. Keyed by turn epoch so stale
+        # completions from a previous turn can be identified and ignored
+        # without corrupting the current turn's deferred-finalization counter.
+        self._epoch_subagent_counts: dict[int, int] = {}
 
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
@@ -795,6 +808,26 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """
         async with self._chat_lock:
             self._cancelled = False
+            self._turn_epoch += 1
+            self._active_subagents = 0  # Reset per turn
+            self._active_subagent_names = []
+            # Drain any deferred finalization left over from the previous turn
+            # before resetting state, so its completion_callback is not lost.
+            if self._idle_deferred and self._deferred_completion_cb:
+                logger.info(
+                    "⚡ Draining deferred finalization from previous turn "
+                    "(epoch=%d)", self._turn_epoch - 1
+                )
+                self._dispatch_async(
+                    self._finalize_session_idle,
+                    self._deferred_status_cb,
+                    self._deferred_completion_cb,
+                )
+            self._epoch_subagent_counts = {}
+            self._idle_deferred = False
+            self._deferred_status_cb = None
+            self._deferred_completion_cb = None
+            self._background_tasks_snapshot = None  # Stale data should not outlive a turn
             if not self.session:
                 await self.start()
             self.current_callback = content_callback

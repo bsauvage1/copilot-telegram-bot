@@ -166,6 +166,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/resume` | Browse past Copilot sessions (filtered by project) and resume one. |
 | `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
+| `/tasks` | Show running background agents and shell tasks. |
 | `/clear` | Reset conversation memory. |
 | `/compact` | Compact context and reset session. |
 | `/infinite` | Toggle infinite sessions (automatic context compaction). |

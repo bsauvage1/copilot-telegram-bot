@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from telegram import Update
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from src.config import WORKSPACE_PATH
@@ -526,6 +527,50 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Cancel failed: {e}")
         await update.message.reply_text(f"⚠️ Cancel failed: {e}")
+
+
+async def tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show currently running background agents and shell tasks."""
+    if not await security_check(update):
+        return
+
+    lines: list[str] = ["🗂 <b>Background Tasks</b>\n"]
+
+    bt = service._background_tasks_snapshot
+    agents = getattr(bt, "agents", None) or []
+    shells = getattr(bt, "shells", None) or []
+
+    if not agents and not shells and service._active_subagents == 0:
+        lines.append("✅ No background tasks running.")
+    else:
+        if agents:
+            lines.append(f"<b>Agents</b> ({len(agents)})")
+            for a in agents:
+                atype = html.escape(getattr(a, "agent_type", "") or "")
+                adesc = getattr(a, "description", "") or ""
+                desc = f" — {html.escape(adesc)}" if adesc else ""
+                lines.append(f"  • <code>{atype}</code>{desc}")
+        if shells:
+            lines.append(f"\n<b>Shell tasks</b> ({len(shells)})")
+            for s in shells:
+                sid = html.escape(getattr(s, "shell_id", "") or "")
+                sdesc = getattr(s, "description", "") or ""
+                desc = f" — {html.escape(sdesc)}" if sdesc else ""
+                lines.append(f"  • <code>{sid}</code>{desc}")
+        if service._active_subagents > 0:
+            names = service._active_subagent_names
+            if names:
+                lines.append(f"\n<b>Sub-agents</b> ({len(names)})")
+                for n in names:
+                    lines.append(f"  • {html.escape(n)}")
+            else:
+                lines.append(
+                    f"\n<i>Sub-agents running: {service._active_subagents}</i>"
+                )
+
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode=ParseMode.HTML
+    )
 
 
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

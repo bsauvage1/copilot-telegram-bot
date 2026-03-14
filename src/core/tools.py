@@ -1,6 +1,8 @@
 import os
 import stat
+import time
 import logging
+from collections import deque
 from pathlib import Path
 from pydantic import BaseModel, Field
 from copilot.tools import define_tool
@@ -8,6 +10,13 @@ from src.core.context import ctx
 from src.config import FILE_CONTENT_LIMIT
 
 logger = logging.getLogger(__name__)
+
+# Rate-limiting state for notify_user tool
+_notify_timestamps: deque[float] = deque()
+_NOTIFY_RATE_LIMIT = 10   # max notifications per window
+_NOTIFY_WINDOW = 60.0     # seconds
+_NOTIFY_PREFIX = "🤖 [Copilot]\n"
+_NOTIFY_MAX_MSG = 3900    # leaves room for prefix + Telegram overhead
 
 # --- Tool Definitions ---
 
@@ -47,6 +56,36 @@ async def list_files(params: ListFilesParams) -> str:
         return "\n".join(sorted(formatted_items))
     except Exception as e:
         return f"Error listing files: {str(e)}"
+
+
+class NotifyUserParams(BaseModel):
+    message: str = Field(description="Notification message to proactively send to the user.")
+
+
+@define_tool(description="Send a proactive notification to the user's Telegram chat without waiting for their next message.")
+async def notify_user(params: NotifyUserParams) -> str:
+    if not ctx.notify_callback:
+        return "Error: Notify callback not configured."
+    # Rate limit: reject if too many notifications sent recently.
+    now = time.monotonic()
+    while _notify_timestamps and now - _notify_timestamps[0] > _NOTIFY_WINDOW:
+        _notify_timestamps.popleft()
+    if len(_notify_timestamps) >= _NOTIFY_RATE_LIMIT:
+        return (
+            f"Error: Rate limit exceeded "
+            f"({_NOTIFY_RATE_LIMIT} notifications per {int(_NOTIFY_WINDOW)}s)."
+        )
+    _notify_timestamps.append(now)
+    # Prefix so users can distinguish AI-originated messages from system alerts.
+    # Truncate to stay within Telegram's message size limit.
+    body = params.message[:_NOTIFY_MAX_MSG]
+    message = f"{_NOTIFY_PREFIX}{body}"
+    try:
+        await ctx.notify_callback(message)
+        return "Notification sent."
+    except Exception as e:
+        logger.error(f"notify_user failed: {e}")
+        return f"Error: {e}"
 
 
 class WorkspaceReadFileParams(BaseModel):
