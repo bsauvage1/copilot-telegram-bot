@@ -23,6 +23,7 @@ Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequ
 - **Project Switcher:** Instantly switch between defined projects in your workspace via `/start`.
 - **Interactive Permissions:** "Allow" or "Deny" tool execution (e.g., file writes, shell commands) with a single tap.
 - **Smart Options:** When the model asks for clarification, reply via multiple-choice buttons.
+- **Remote Session Resume:** `/resume` shows a unified list of local and remote sessions. Tap a remote session to pull it from GitHub and resume — cross-device continuity with one tap.
 
 ### 👁️ Support Multimodal Vision
 Don't just tell Copilot about the bug—**show it**.
@@ -103,10 +104,13 @@ Don't just tell Copilot about the bug—**show it**.
     WORKSPACE_ROOT=/absolute/path/to/your/projects
     GRANTED_PROJECTS=/optional/additional/paths  # Comma-separated, optional
     GITHUB_TOKEN=ghp_your_github_token_here  # Optional, see below
+    COPILOT_SESSIONS_REPO=owner/repo-name  # Optional, enables remote session sync
     ```
     > **ALLOWED_USER_ID** is mandatory—only this user can access the bot. Get your ID from the first bot message if not set.
     
     > **WORKSPACE_ROOT** is your project sandbox. The bot cannot access files outside this directory (or `GRANTED_PROJECTS`).
+    
+    > **COPILOT_SESSIONS_REPO** (optional) — set to a private GitHub repo (`owner/repo`) that stores your Copilot session files. When configured, `/resume` merges local sessions with remote ones so you can continue sessions started on another machine. Uses `GITHUB_TOKEN` (or `gh auth token`) for access.
     
     ### GitHub Authentication
     
@@ -163,7 +167,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/context` | Display model context and token usage info. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/session` | Show session info and workspace summary. |
-| `/resume` | Browse past Copilot sessions (filtered by project) and resume one. |
+| `/resume` | Browse local **and remote** past sessions (filtered by project) and resume one. Tap a remote session to pull it from GitHub then resume. Direct: `/resume <id>`. |
 | `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
 | `/tasks` | Show running background agents and shell tasks. |
@@ -238,6 +242,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook.
   - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
+  - **[session_sync.py](src/core/session_sync.py)**: `SessionSyncClient` — fetches `sessions/index.json` from a GitHub-hosted sessions repo and pulls `events.jsonl` + `workspace.yaml` per session on demand. Powers the remote side of `/resume`. Requires `COPILOT_SESSIONS_REPO` env var.
   - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
   - **[tools.py](src/core/tools.py)**: Read-only MCP tools (`list_files`, `workspace_read_file`) with strict path validation.
   - **[git.py](src/core/git.py)**: Branch detection and dirty-tree status for HUD footers.

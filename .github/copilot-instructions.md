@@ -22,7 +22,7 @@ There are no tests, linters, or CI pipelines configured.
 
 Three-layer, event-driven design bridging the `github-copilot-sdk` (`CopilotClient` over JSON-RPC/stdio) with the Telegram Bot API (`python-telegram-bot` v20+ async).
 
-- **`src/core/`** — SDK integration and state. `CopilotService` is the singleton orchestrator, composed via mixins: `EventHandlerMixin` (routes 12+ SDK event types) and `SessionMixin` (client lifecycle, permission bridge, model switching). `SessionContext` (`ctx`) is a global singleton holding shared state (working directory, tracked files). All state is in-memory — zero database.
+- **`src/core/`** — SDK integration and state. `CopilotService` is the singleton orchestrator, composed via mixins: `EventHandlerMixin` (routes 12+ SDK event types) and `SessionMixin` (client lifecycle, permission bridge, model switching). `SessionContext` (`ctx`) is a global singleton holding shared state (working directory, tracked files). All state is in-memory — zero database. `SessionSyncClient` (`session_sync.py`) handles optional remote session sync from a GitHub-hosted repo.
 - **`src/handlers/`** — Telegram handlers. Commands, chat messages, and inline-button callbacks. The permission bridge uses `asyncio.Future` objects: `messages.py` creates a Future + inline keyboard when the SDK requests tool approval, `callbacks.py` resolves it when the user taps Allow/Deny.
 - **`src/ui/`** — Output formatting. `MessageSender` auto-splits at 4000 chars with safe code-block handling. `formatters.py` has per-tool display logic (bash, edit, create, grep, view, etc.). `menus.py` generates keyboard layouts and cockpit displays.
 
@@ -41,3 +41,4 @@ Entry point: `main.py` → `src/main.py` (registers all Telegram handlers and st
 - **Telegram message limits** — `TELEGRAM_MSG_LIMIT` (4000 chars) is the safe ceiling. Messages are auto-split with code-fence tracking across chunks.
 - **Logging** — standard `logging` module, one logger per file via `logging.getLogger(__name__)`.
 - **Security checks** — every handler calls `security_check()` (verifies `ALLOWED_USER_ID`) and `check_project_selected()` before proceeding.
+- **Remote session sync** — optional `COPILOT_SESSIONS_REPO` env var enables cross-device session continuity. `SessionSyncClient` (`src/core/session_sync.py`) reads `sessions/index.json` from a GitHub repo and pulls session files on demand. `/resume` merges local and remote sessions into a single picker; tapping a remote entry triggers a pull then resume. Uses `GITHUB_TOKEN` or falls back to `gh auth token`.
