@@ -144,13 +144,32 @@ def _clean_summary(raw: str | None) -> str:
 _PROJECT_ICONS = ["🔵", "🟢", "🟡", "🟠", "🔴", "🟣", "🟤", "⚪", "🔶", "🔷"]
 
 
+def _session_matches_cwd(session_id: str, cwd_filter: str) -> bool:
+    """Return True if a local session's cwd matches the filter.
+
+    Matches on the final path component (project folder name) to handle
+    sessions created on different machines or OS (Windows backslash paths).
+    """
+    session_cwd = _read_session_cwd(session_id)
+    if not session_cwd:
+        return False
+    # Split on both / and \ to handle cross-OS paths
+    session_name = session_cwd.replace("\\", "/").rstrip("/").split("/")[-1].lower()
+    filter_name = cwd_filter.replace("\\", "/").rstrip("/").split("/")[-1].lower()
+    return session_name == filter_name
+
+
 def get_visible_sessions(sessions, cwd_filter: Optional[str] = None) -> list:
     """Return the subset of sessions that would appear in get_sessions_keyboard.
 
     Used to limit title generation to only the sessions actually shown.
     """
     sorted_sessions = sorted(
-        sessions, key=lambda s: getattr(s, "modifiedTime", "") or "", reverse=True
+        sessions,
+        key=lambda s: (
+            getattr(s, "modifiedTime", None) or getattr(s, "startTime", "") or ""
+        ),
+        reverse=True,
     )
     if cwd_filter:
         result = []
@@ -158,7 +177,7 @@ def get_visible_sessions(sessions, cwd_filter: Optional[str] = None) -> list:
             if len(result) >= 10:
                 break
             sid = getattr(s, "sessionId", None) or str(s)
-            if _read_session_cwd(sid) == cwd_filter:
+            if _session_matches_cwd(sid, cwd_filter):
                 result.append(s)
         return result
     # All-projects: up to 5 per project
@@ -176,7 +195,11 @@ def get_visible_sessions(sessions, cwd_filter: Optional[str] = None) -> list:
     return [s for items in groups.values() for s in items]
 
 
-def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
+def get_sessions_keyboard(
+    sessions,
+    cwd_filter: Optional[str] = None,
+    foreign_ids: Optional[set[str]] = None,
+):
     """Build inline keyboard listing recent sessions for /sessions command.
 
     Returns (header_text, InlineKeyboardMarkup).
@@ -186,34 +209,50 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
     icon that appears both in the header legend and as a prefix on each session button.
     """
     sorted_sessions = sorted(
-        sessions, key=lambda s: getattr(s, "modifiedTime", "") or "", reverse=True
+        sessions,
+        key=lambda s: (
+            getattr(s, "modifiedTime", None) or getattr(s, "startTime", "") or ""
+        ),
+        reverse=True,
     )
 
     def _make_btn(s, session_id, icon=""):
         from src.core.titler import read_session_summary
 
-        summary = _clean_summary(read_session_summary(session_id))
-        if not summary:
-            summary = _read_plan_summary(session_id) or ""
+        is_remote = getattr(s, "_remote", False)
+        is_foreign = session_id in (foreign_ids or set())
+        if is_remote:
+            summary = _clean_summary(getattr(s, "summary", None) or "") or ""
+        else:
+            summary = _clean_summary(read_session_summary(session_id))
+            if not summary:
+                summary = _read_plan_summary(session_id) or ""
         start_time = getattr(s, "startTime", None) or ""
         date_str = start_time[:10]
         time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id
+        remote_prefix = "🌐 " if is_foreign else ""
         prefix = f"{icon} " if icon else ""
         summary_part = f"  {summary}" if summary else ""
-        label = f"{prefix}{date_str} {time_str} [{short_id}]{summary_part}"
-        return InlineKeyboardButton(label, callback_data=f"session:{session_id}")
+        label = (
+            f"{remote_prefix}{prefix}{date_str} {time_str} [{short_id}]{summary_part}"
+        )
+        cb = f"remote_session:{session_id}" if is_remote else f"session:{session_id}"
+        return InlineKeyboardButton(label, callback_data=cb)
 
     if cwd_filter:
-        # Single-project view: flat list filtered by CWD
-        btns = []
+        # Single-project view: top 10 most recent, local and remote blended by time
+        matching = []
         for s in sorted_sessions:
-            if len(btns) >= 10:
-                break
             session_id = getattr(s, "sessionId", None) or str(s)
-            if _read_session_cwd(session_id) != cwd_filter:
-                continue
-            btns.append(_make_btn(s, session_id))
+            is_remote = getattr(s, "_remote", False)
+            if is_remote:
+                matching.append((s, session_id))
+            else:
+                if _session_matches_cwd(session_id, cwd_filter):
+                    matching.append((s, session_id))
+
+        btns = [_make_btn(s, sid) for s, sid in matching[:10]]
         if not btns:
             btns.append(
                 InlineKeyboardButton(
@@ -263,52 +302,51 @@ def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
         return header, InlineKeyboardMarkup(rows)
 
 
-_SESSIONS_MORE_LIMIT = 60
 _SESSIONS_MORE_PAGE_SIZE = 15
 _SESSIONS_BTN_MAX = 60  # max chars per session button label
 
 
 def get_sessions_text_page(
-    sessions, page: int = 0
+    sessions,
+    page: int = 0,
+    cwd_filter: Optional[str] = None,
+    foreign_ids: Optional[set[str]] = None,
 ) -> tuple["str", "InlineKeyboardMarkup"]:
-    """Return a paginated button-list keyboard for recent sessions.
+    """Return a paginated button-list keyboard for sessions in the current project.
 
     Each session is a tappable InlineKeyboardButton that resumes directly.
-    Sessions are sorted by recency across all projects (up to
-    _SESSIONS_MORE_LIMIT total).
+    Sessions are filtered to cwd_filter (if provided) and sorted by recency.
 
     Args:
         sessions: Raw list of session objects from client.list_sessions().
         page: Zero-based page index.
+        cwd_filter: Local working directory path; only sessions for this
+            project are shown.
 
     Returns:
         Tuple of (message_text, InlineKeyboardMarkup).
     """
-    from collections import OrderedDict
     from src.core.titler import read_session_summary
 
-    sorted_sessions = sorted(
-        sessions,
-        key=lambda s: getattr(s, "modifiedTime", "") or "",
-        reverse=True,
-    )[:_SESSIONS_MORE_LIMIT]
+    filter_name = Path(cwd_filter).name.lower() if cwd_filter else None
 
-    # Assign project icons for multi-project context
-    groups: dict = OrderedDict()
-    for s in sorted_sessions:
-        session_id = getattr(s, "sessionId", None) or str(s)
-        cwd = _read_session_cwd(session_id)
-        project = Path(cwd).name if cwd else "Unknown"
-        if project not in groups:
-            groups[project] = []
-        groups[project].append(session_id)
-    icon_map = {
-        p: _PROJECT_ICONS[i % len(_PROJECT_ICONS)] for i, p in enumerate(groups)
-    }
-    session_icon: dict[str, str] = {}
-    for project, ids in groups.items():
-        for sid in ids:
-            session_icon[sid] = icon_map[project]
+    def _matches(s) -> bool:
+        if not filter_name:
+            return True
+        sid = getattr(s, "sessionId", None) or str(s)
+        is_remote = getattr(s, "_remote", False)
+        if is_remote:
+            repo = getattr(s, "cwd", None) or ""
+            return repo.split("/")[-1].lower() == filter_name
+        return _session_matches_cwd(sid, cwd_filter)
+
+    sorted_sessions = sorted(
+        (s for s in sessions if _matches(s)),
+        key=lambda s: (
+            getattr(s, "modifiedTime", None) or getattr(s, "startTime", "") or ""
+        ),
+        reverse=True,
+    )
 
     total = len(sorted_sessions)
     page_size = _SESSIONS_MORE_PAGE_SIZE
@@ -321,16 +359,20 @@ def get_sessions_text_page(
 
     for s in page_sessions:
         session_id = getattr(s, "sessionId", None) or str(s)
+        is_remote = getattr(s, "_remote", False)
+        is_foreign = session_id in (foreign_ids or set())
         start_time = getattr(s, "startTime", None) or ""
         date_str = start_time[:10]
         time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id
-        summary = _clean_summary(read_session_summary(session_id))
-        if not summary:
-            summary = _read_plan_summary(session_id) or ""
-        icon = session_icon.get(session_id, "")
-        prefix = f"{icon} " if icon else ""
-        fixed = f"{prefix}{date_str} {time_str} [{short_id}]"
+        if is_remote:
+            summary = _clean_summary(getattr(s, "summary", None) or "") or ""
+        else:
+            summary = _clean_summary(read_session_summary(session_id))
+            if not summary:
+                summary = _read_plan_summary(session_id) or ""
+        remote_prefix = "🌐 " if is_foreign else ""
+        fixed = f"{remote_prefix}{date_str} {time_str} [{short_id}]"
         remaining = _SESSIONS_BTN_MAX - len(fixed) - 1
         if summary and remaining > 3:
             if len(summary) > remaining:
@@ -338,11 +380,10 @@ def get_sessions_text_page(
             label = f"{fixed} {summary}"
         else:
             label = fixed
-        rows.append(
-            [InlineKeyboardButton(label, callback_data=f"session:{session_id}")]
-        )
+        cb = f"remote_session:{session_id}" if is_remote else f"session:{session_id}"
+        rows.append([InlineKeyboardButton(label, callback_data=cb)])
 
-    text = f"📋 Recent Sessions — page {page + 1}/{total_pages}"
+    text = f"📋 Sessions ({total} total) — page {page + 1}/{total_pages}"
 
     # Navigation row
     nav: list[InlineKeyboardButton] = []

@@ -568,9 +568,7 @@ async def tasks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"\n<i>Sub-agents running: {service._active_subagents}</i>"
                 )
 
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode=ParseMode.HTML
-    )
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1385,21 +1383,63 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not service._is_running:
             await service.start()
-        sessions = await service.client.list_sessions()
-        if not sessions:
-            await msg.edit_text("📋 No past sessions found.")
-            return
+        from src.core.session_sync import get_sync_client, current_machine
         from src.core.titler import ensure_session_titles
         from src.ui.menus import get_visible_sessions
 
         cwd = service.get_working_directory()
+        sync_client = get_sync_client()
+        this_machine = current_machine()
+
+        if sync_client:
+            local_result, remote_result = await asyncio.gather(
+                service.client.list_sessions(),
+                sync_client.list_remote(cwd_filter=cwd),
+                return_exceptions=True,
+            )
+            sessions = local_result if not isinstance(local_result, Exception) else []
+            remote_sessions = (
+                remote_result if not isinstance(remote_result, Exception) else []
+            )
+            if isinstance(remote_result, Exception):
+                logger.warning("Remote session fetch failed: %s", remote_result)
+        else:
+            sessions = await service.client.list_sessions()
+            remote_sessions = []
+
+        # Sessions created on a different machine get the 🌐 icon
+        foreign_ids: set[str] = {
+            s.sessionId
+            for s in remote_sessions
+            if getattr(s, "machine", None) and s.machine != this_machine
+        }
+
+        # Deduplicate: local wins on matching sessionId
+        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        unique_remote = [
+            s for s in remote_sessions if getattr(s, "sessionId", None) not in local_ids
+        ]
+
+        if not sessions and not unique_remote:
+            await msg.edit_text("📋 No past sessions found.")
+            return
+
         visible = get_visible_sessions(sessions, cwd_filter=cwd)
         await msg.edit_text("🔄 Fetching sessions... generating missing titles")
         await ensure_session_titles(visible)
-        # Re-fetch so session objects carry the freshly written summaries
+        # Re-fetch local sessions so objects carry freshly written summaries
         sessions = await service.client.list_sessions()
+        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        unique_remote = [
+            s for s in unique_remote if getattr(s, "sessionId", None) not in local_ids
+        ]
+        all_sessions = list(sessions) + unique_remote
+        # Store foreign_ids for use by pagination callbacks
+        context.user_data["foreign_session_ids"] = foreign_ids
         project_name = service.project_name or Path(cwd).name
-        header, keyboard = get_sessions_keyboard(sessions, cwd_filter=cwd)
+        header, keyboard = get_sessions_keyboard(
+            all_sessions, cwd_filter=cwd, foreign_ids=foreign_ids
+        )
         buttons = list(keyboard.inline_keyboard)
         buttons.append(
             [
@@ -1408,9 +1448,6 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     callback_data="sessions_more",
                 )
             ]
-        )
-        buttons.append(
-            [InlineKeyboardButton("🌐 Show all projects", callback_data="sessions_all")]
         )
         await msg.edit_text(
             f"📋 Sessions for: {project_name}\n{header}",

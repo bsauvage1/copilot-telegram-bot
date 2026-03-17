@@ -137,9 +137,9 @@ async def _handle_interaction_callback(query, update, context):
             PENDING_INTERACTIONS.pop(interaction_id, None)
             logger.info(f"🧹 Cleaned up interaction {interaction_id}")
         except Exception as set_err:
-            logger.error(f"❌ Error setting future result: {set_err}", exc_info=True)
+            logger.error("❌ Error setting future result: %s", set_err, exc_info=True)
             await query.edit_message_text(
-                f"⚠️ Error processing selection: {str(set_err)}"
+                "⚠️ Error processing selection. Please try again."
             )
     else:
         logger.warning(f"⚠️ Future for {interaction_id} is None or already done")
@@ -314,55 +314,126 @@ async def _handle_session_callback(query, context):
         else:
             await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}")
     except Exception as e:
-        logger.error(f"Session resume failed: {e}")
-        await msg.edit_text(f"⚠️ Failed to resume session: {e}")
+        logger.error("Session resume failed: %s", e, exc_info=True)
+        await msg.edit_text("⚠️ Failed to resume session. Please try again.")
 
 
-async def _handle_sessions_all_callback(query, context):
-    """Show sessions from all projects (no CWD filter)."""
-    from src.ui.menus import get_sessions_keyboard, get_visible_sessions
-    from src.core.titler import ensure_session_titles
+async def _handle_remote_session_callback(query, context):
+    """Handle remote_session: callbacks — pull from remote then resume."""
+    from src.core.session_sync import get_sync_client, _SESSION_ID_RE
+    from src.ui.menus import _clean_summary, _read_plan_summary
+    from src.core.titler import read_session_summary
 
-    await query.edit_message_text("🔄 Fetching all sessions...")
-    try:
-        sessions = await service.client.list_sessions()
-        visible = get_visible_sessions(sessions, cwd_filter=None)
-        await query.edit_message_text(
-            "🔄 Fetching all sessions... generating missing titles"
+    session_id = query.data.split(":", 1)[1]
+    if not _SESSION_ID_RE.match(session_id):
+        await query.message.reply_text("⚠️ Invalid session identifier.")
+        return
+    msg = await query.message.reply_text(
+        f"⏳ Pulling remote session {session_id[-8:]}..."
+    )
+    sync_client = get_sync_client()
+    if not sync_client:
+        await msg.edit_text(
+            "⚠️ Remote sessions not configured (COPILOT_SESSIONS_REPO not set)."
         )
-        await ensure_session_titles(visible)
-        # Re-fetch so session objects carry the freshly written summaries
-        sessions = await service.client.list_sessions()
-        header, keyboard = get_sessions_keyboard(sessions, cwd_filter=None)
-        await query.edit_message_text(f"📋 {header}", reply_markup=keyboard)
+        return
+    try:
+        await sync_client.pull_session(session_id)
     except Exception as e:
-        logger.error(f"sessions_all failed: {e}")
-        await query.edit_message_text(f"⚠️ Failed: {e}")
+        logger.error(
+            "Failed to pull remote session %s: %s",
+            session_id,
+            e,
+            exc_info=True,
+        )
+        await msg.edit_text("⚠️ Failed to pull remote session. Please try again.")
+        return
+    try:
+        await msg.edit_text(f"🔄 Resuming session {session_id[-8:]}...")
+        await service.resume_session_by_id(session_id)
+        summary = _clean_summary(read_session_summary(session_id))
+        if not summary:
+            summary = _read_plan_summary(session_id)
+        if summary:
+            await msg.edit_text(
+                f"✅ Session resumed: {session_id[-8:]}\n\n📝 Summary:\n{summary}"
+            )
+        else:
+            await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}")
+    except Exception as e:
+        logger.error("Session resume failed after pull: %s", e, exc_info=True)
+        await msg.edit_text("⚠️ Failed to resume session. Please try again.")
 
 
 async def _handle_sessions_more_callback(query, context, page: int = 0):
-    """Show paginated button-list of recent sessions."""
+    """Show paginated button-list of recent local + remote sessions."""
+    import asyncio
     from src.ui.menus import get_sessions_text_page, _SESSIONS_MORE_PAGE_SIZE
     from src.core.titler import ensure_session_titles
+    from src.core.session_sync import get_sync_client, current_machine
 
     await query.edit_message_text("🔄 Loading sessions...")
     try:
-        sessions = await service.client.list_sessions()
-        sorted_sessions = sorted(
+        cwd = service.get_working_directory()
+        sync_client = get_sync_client()
+        this_machine = current_machine()
+
+        if sync_client:
+            local_result, remote_result = await asyncio.gather(
+                service.client.list_sessions(),
+                sync_client.list_remote(cwd_filter=cwd),
+                return_exceptions=True,
+            )
+            sessions = local_result if not isinstance(local_result, Exception) else []
+            remote_sessions = (
+                remote_result if not isinstance(remote_result, Exception) else []
+            )
+            if isinstance(remote_result, Exception):
+                logger.warning("Remote session fetch failed: %s", remote_result)
+        else:
+            sessions = await service.client.list_sessions()
+            remote_sessions = []
+
+        stored = context.user_data.get("foreign_session_ids")
+        foreign_ids: set[str] = (
+            stored
+            if stored is not None
+            else {
+                s.sessionId
+                for s in remote_sessions
+                if getattr(s, "machine", None) and s.machine != this_machine
+            }
+        )
+        context.user_data["foreign_session_ids"] = foreign_ids
+
+        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        unique_remote = [
+            s for s in remote_sessions if getattr(s, "sessionId", None) not in local_ids
+        ]
+
+        sorted_local = sorted(
             sessions,
-            key=lambda s: getattr(s, "modifiedTime", "") or "",
+            key=lambda s: getattr(s, "startTime", "") or "",
             reverse=True,
         )
         page_size = _SESSIONS_MORE_PAGE_SIZE
         start = page * page_size
-        visible = sorted_sessions[start : start + page_size]
+        visible = sorted_local[start : start + page_size]
         await ensure_session_titles(visible)
+        # Re-fetch so summaries are current
         sessions = await service.client.list_sessions()
-        text, keyboard = get_sessions_text_page(sessions, page=page)
+        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        unique_remote = [
+            s for s in unique_remote if getattr(s, "sessionId", None) not in local_ids
+        ]
+        all_sessions = list(sessions) + unique_remote
+        text, keyboard = get_sessions_text_page(
+            all_sessions, page=page, cwd_filter=cwd, foreign_ids=foreign_ids
+        )
         await query.edit_message_text(text, reply_markup=keyboard)
     except Exception as e:
-        logger.error(f"sessions_more failed: {e}")
-        await query.edit_message_text(f"⚠️ Failed: {e}")
+        logger.error("sessions_more failed: %s", e, exc_info=True)
+        await query.edit_message_text("⚠️ Failed to load sessions. Please try again.")
 
 
 async def _handle_project_callback(query, context):
@@ -385,8 +456,8 @@ async def _handle_project_callback(query, context):
         if _project_switch_already_succeeded(path):
             logger.warning(f"Suppressing late project-switch warning: {e}")
             return
-        logger.error(f"Project Switch Failed: {e}")
-        await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
+        logger.error("Project Switch Failed: %s", e, exc_info=True)
+        await query.message.reply_text("⚠️ Failed to switch project. Please try again.")
 
 
 async def _handle_granted_project_callback(query, context):
@@ -408,8 +479,8 @@ async def _handle_granted_project_callback(query, context):
         if path is not None and _project_switch_already_succeeded(path):
             logger.warning(f"Suppressing late granted-project warning: {e}")
             return
-        logger.error(f"Granted Project Switch Failed: {e}")
-        await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
+        logger.error("Granted Project Switch Failed: %s", e, exc_info=True)
+        await query.message.reply_text("⚠️ Failed to switch project. Please try again.")
 
 
 def _mode_picker_header(active_mode: str) -> str:
@@ -471,7 +542,7 @@ async def _handle_mode_callback(query, context):
         )
         active_mode = resp.get("mode", mode)
     except Exception as e:
-        logger.error(f"mode.set failed: {e}")
+        logger.error("mode.set failed: %s", e, exc_info=True)
         await query.edit_message_text(
             "⚠️ Failed to set mode — check bot logs for details."
         )
@@ -538,7 +609,7 @@ async def _handle_autopilot_confirm_callback(query, context):
         )
         active_mode = resp.get("mode", "autopilot")
     except Exception as e:
-        logger.error(f"autopilot mode.set failed: {e}")
+        logger.error("autopilot mode.set failed: %s", e, exc_info=True)
         await query.edit_message_text(
             "⚠️ Failed to set Autopilot mode — check bot logs for details."
         )
@@ -927,12 +998,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await query.answer("⏳ Fetching version info…")
         except Exception as e:
-            logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
+            logger.error("❌ query.answer() failed: %s", e, exc_info=True)
     else:
         try:
             await query.answer()
         except Exception as e:
-            logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
+            logger.error("❌ query.answer() failed: %s", e, exc_info=True)
 
     try:
         if data.startswith("perm:") or data.startswith("input:"):
@@ -966,8 +1037,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):
             await _handle_ls_callback(query, context)
-        elif data == "sessions_all":
-            await _handle_sessions_all_callback(query, context)
         elif data == "sessions_more" or data.startswith("sessions_more:"):
             page = int(data.split(":")[1]) if ":" in data else 0
             await _handle_sessions_more_callback(query, context, page)
@@ -977,6 +1046,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_reasoning_callback(query, context)
         elif data.startswith("session:"):
             await _handle_session_callback(query, context)
+        elif data.startswith("remote_session:"):
+            await _handle_remote_session_callback(query, context)
         elif data.startswith("proj_granted:"):
             await _handle_granted_project_callback(query, context)
             return ConversationHandler.END
@@ -989,7 +1060,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("New project name:")
             return WAITING_PROJECT_NAME
     except Exception as e:
-        logger.error(f"❌ Error handling button callback '{data}': {e}", exc_info=True)
+        logger.error(
+            "❌ Error handling button callback %r: %s",
+            data,
+            e,
+            exc_info=True,
+        )
     return ConversationHandler.END
 
 

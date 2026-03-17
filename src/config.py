@@ -20,6 +20,7 @@ WORKSPACE_ROOT = os.getenv(
     "WORKSPACE_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # Optional: overrides CLI auth
+COPILOT_SESSIONS_REPO = os.getenv("COPILOT_SESSIONS_REPO")  # e.g. user/copilot-sessions
 
 # Resolve Workspace Root
 WORKSPACE_PATH = Path(WORKSPACE_ROOT).resolve()
@@ -53,7 +54,9 @@ else:
 
 DEFAULT_MODEL = "gpt-4.1"  # model used when user hasn't chosen one
 INTERACTION_TIMEOUT = 300  # seconds — timeout for user interactions (permission, input)
-CHAT_TIMEOUT = 1200  # seconds — timeout for a full chat turn (use /cancel to abort early)
+CHAT_TIMEOUT = (
+    1200  # seconds — timeout for a full chat turn (use /cancel to abort early)
+)
 MAX_TRACKED_FILES = 200  # max files tracked in SessionContext before pruning
 TRACKED_FILES_PRUNE_SIZE = 100  # keep last N files when pruning
 FILE_CONTENT_LIMIT = 100_000  # max characters when reading file content
