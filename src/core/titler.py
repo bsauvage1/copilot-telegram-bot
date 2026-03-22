@@ -118,13 +118,11 @@ async def _run_title_generation(session_id: str, first_message: str) -> None:
         from copilot.types import PermissionHandler
 
         temp_session = await service.client.create_session(
-            {
-                "streaming": False,
-                "tools": [],  # no tools needed
-                "on_permission_request": PermissionHandler.approve_all,
-            }
+            on_permission_request=PermissionHandler.approve_all,
+            streaming=False,
+            tools=[],
         )
-        event = await temp_session.send_and_wait({"prompt": prompt}, timeout=60)
+        event = await temp_session.send_and_wait(prompt, timeout=60)
         raw = ""
         if event is not None:
             raw = (

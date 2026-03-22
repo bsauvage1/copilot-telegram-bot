@@ -53,6 +53,8 @@ class EventHandlerMixin:
             SessionEventType.ASSISTANT_MESSAGE_DELTA: self._on_assistant_message_delta,
             SessionEventType.SESSION_COMPACTION_START: self._on_compaction_start,
             SessionEventType.SESSION_COMPACTION_COMPLETE: self._on_compaction_complete,
+            SessionEventType.SESSION_SNAPSHOT_REWIND: self._on_snapshot_rewind,
+            SessionEventType.SYSTEM_NOTIFICATION: self._on_system_notification,
         }
 
     def _handle_event(self, event):
@@ -399,6 +401,25 @@ class EventHandlerMixin:
             self._dispatch_async(
                 ctx.status_callback, "📦 Context compaction in progress..."
             )
+
+    def _on_snapshot_rewind(self, event):
+        raw = getattr(event.data, "events_removed", None)
+        try:
+            events_removed = int(raw) if raw is not None else 0
+        except (ValueError, TypeError):
+            events_removed = 0
+        logger.info(f"↩️ Session snapshot rewind: {events_removed} events removed")
+        if events_removed > 0:
+            cb = ctx.status_callback or ctx.notify_callback
+            if cb:
+                self._dispatch_async(cb, f"↩️ {events_removed} event(s) rewound")
+
+    def _on_system_notification(self, event):
+        text = (getattr(event.data, "text", "") or "").strip()
+        logger.info(f"🔔 System notification: {text[:200]}")
+        cb = ctx.status_callback or ctx.notify_callback
+        if text and cb:
+            self._dispatch_async(cb, f"🔔 {text[:1000]}")
 
     def _on_compaction_complete(self, event):
         success = getattr(event.data, "success", None)

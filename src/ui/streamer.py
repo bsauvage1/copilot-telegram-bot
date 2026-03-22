@@ -36,6 +36,8 @@ class MessageSender:
         self._stream_buf: str = ""  # Accumulated streaming text
         self._stream_last_edit: float = 0.0  # Timestamp of last edit
         self._stream_creating: bool = False  # Guard: a task is creating _stream_msg
+        self._stream_edit_failures: int = 0  # Consecutive edit failures
+        self._STREAM_MAX_FAILURES = 3  # Invalidate message after this many failures
         self._STREAM_DEBOUNCE = 1.0  # Minimum seconds between edits
         self._working_last_edit: float = 0.0  # Timestamp of last Working card edit
         self._working_first_pending: float = (
@@ -260,6 +262,7 @@ class MessageSender:
                     timeout=10.0,
                 )
                 self._stream_last_edit = _time_mod.monotonic()
+                self._stream_edit_failures = 0
             except RetryAfter as e:
                 # Advance the debounce clock by the full mandatory backoff so that
                 # subsequent deltas don't immediately retry and hammer the endpoint.
@@ -270,10 +273,20 @@ class MessageSender:
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     logger.debug(f"Stream edit failed: {e}")
+                    self._stream_edit_failures += 1
                 self._stream_last_edit = _time_mod.monotonic()
             except Exception as e:
                 logger.debug(f"Stream edit failed: {e}")
+                self._stream_edit_failures += 1
                 self._stream_last_edit = _time_mod.monotonic()
+
+            if self._stream_edit_failures >= self._STREAM_MAX_FAILURES:
+                logger.warning(
+                    f"Stream card dead after {self._stream_edit_failures} failures"
+                    " — invalidating so next delta creates a fresh message"
+                )
+                self._stream_msg = None
+                self._stream_edit_failures = 0
 
     async def finalize_stream(self, footer: str = ""):
         """Finalize the Working card and send the full response as new messages."""

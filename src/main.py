@@ -37,6 +37,7 @@ from src.handlers.commands import (
     infinite_command,
     ping_command,
     compact_command,
+    undo_command,
     review_command,
     changelog_command,
     streamer_mode_command,
@@ -83,6 +84,7 @@ async def setup_bot_commands(application):
         BotCommand("resume", "Browse & resume past sessions"),
         BotCommand("clear", "Reset conversation memory"),
         BotCommand("compact", "Compact context (smart reset)"),
+        BotCommand("undo", "Undo last turn and revert file changes"),
         BotCommand("cancel", "Cancel in-progress request"),
         BotCommand("tasks", "Show running background agents and tasks"),
         BotCommand("share", "Export session to Markdown"),
@@ -243,6 +245,7 @@ def main():
     app.add_handler(CommandHandler("restart", restart_command))
     app.add_handler(CommandHandler("versions", versions_command))
     app.add_handler(CommandHandler("compact", compact_command))
+    app.add_handler(CommandHandler("undo", undo_command))
     app.add_handler(CommandHandler("review", review_command))
     app.add_handler(CommandHandler("changelog", changelog_command))
     app.add_handler(CommandHandler("streamer_mode", streamer_mode_command))

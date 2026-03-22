@@ -55,8 +55,6 @@ _TOOL_ALLOWLIST = frozenset(
     {
         "report_intent",
         "task",
-        "list_files",
-        "workspace_read_file",
         "view",
         "glob",
         "grep",
@@ -459,7 +457,7 @@ class SessionMixin:
         _apply_agent_config(self, resume_config)
 
         _patch_session_attachments(session_id)
-        self.session = await self.client.resume_session(session_id, resume_config)
+        self.session = await self.client.resume_session(session_id, **resume_config)
         self.current_model = model
         logger.info(f"✅ Session resumed: {session_id}")
 
@@ -607,7 +605,7 @@ class SessionMixin:
 
         _apply_agent_config(self, session_config)
         try:
-            self.session = await self.client.create_session(session_config)
+            self.session = await self.client.create_session(**session_config)
         except Exception as e:
             if not (
                 "reasoning_effort" in session_config
@@ -632,7 +630,7 @@ class SessionMixin:
             retry_config = dict(session_config)
             retry_config.pop("reasoning_effort", None)
             retry_config.pop("model", None)
-            self.session = await self.client.create_session(retry_config)
+            self.session = await self.client.create_session(**retry_config)
             model = None
             self._pending_runtime_warning = (
                 "⚠️ <b>Model fallback applied</b>\n\n"

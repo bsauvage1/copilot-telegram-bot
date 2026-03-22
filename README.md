@@ -57,7 +57,7 @@ Don't just tell Copilot about the bug—**show it**.
 
 ### 🛡️ Security & Control (Human-in-the-Loop)
 - **Workspace Confinement:** Server-side enforcement of workspace paths. All file access restricted to `WORKSPACE_ROOT` + optional `GRANTED_PROJECTS` paths.
-- **Two-Tier Permission Model:** Safe, read-only tools (`list_files`, `workspace_read_file`, `view`, `glob`, etc.) are **auto-approved** for seamless flow. Dangerous tools (`bash`, `edit`, `create`) require **explicit user approval** via inline buttons.
+- **Two-Tier Permission Model:** Safe, read-only tools (`view`, `glob`, `grep`, `task`, `report_intent`, etc.) are **auto-approved** for seamless flow. Dangerous tools (`bash`, `edit`, `create`) require **explicit user approval** via inline buttons.
 - **Transparent Tool Use:** Every tool invocation is displayed to you—auto-approved ones show inline, while dangerous ones pause and wait for your tap.
 - **Chat Lock:** Prevents concurrent requests from interfering with each other.
 - **Zero Database:** Lightweight, portable sessions stored in-memory—no persistence layer required.
@@ -188,6 +188,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/cockpit` | Re-display the session status card (model, mode, agent, MCP, workspace, branch, stats). |
 | `/ping` | Check CLI connectivity and measure latency. |
+| `/undo` | Undo the last turn and roll back any file changes made by the agent. |
 | `/restart` | Restart the Copilot CLI process (hot-restart). Tears down and restarts the CLI binary, preserving your project selection and current session. Useful when the CLI is stuck or unresponsive. |
 | `/versions` | Show machine/runtime/latest CLI+SDK versions with upgrade and release-note links. |
 | `/update` | Update the Copilot CLI binary. |
@@ -204,7 +205,7 @@ This bot is built on top of the **`github-copilot-sdk`**, which manages a `Copil
 The bot uses a **two-tier permission model**:
 
 **Auto-approved tools** (seamless, no interruption):
-`list_files`, `workspace_read_file`, `view`, `glob`, `report_intent`, `task`, `update_todo`, `ask_user`, `fetch_copilot_cli_documentation`
+`view`, `glob`, `grep`, `report_intent`, `task`, `update_todo`, `ask_user`, `fetch_copilot_cli_documentation`
 
 **Requires explicit approval** (inline keyboard prompt):
 `bash`, `edit`, `create`, and any other tool not in the allowlist.
@@ -240,16 +241,16 @@ Three-layer, event-driven design under [src/](src/):
 - **[src/core/](src/core/)** — SDK & State Management:
   - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks (`content_callback`, `status_callback`, `interaction_callback`, `completion_callback`).
   - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook.
-  - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
+  - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, `SESSION_SNAPSHOT_REWIND`, `SYSTEM_NOTIFICATION`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
   - **[session_sync.py](src/core/session_sync.py)**: `SessionSyncClient` — fetches `sessions/index.json` from a GitHub-hosted sessions repo and pulls `events.jsonl` + `workspace.yaml` per session on demand. Powers the remote side of `/resume`. Requires `COPILOT_SESSIONS_REPO` env var.
   - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
-  - **[tools.py](src/core/tools.py)**: Read-only MCP tools (`list_files`, `workspace_read_file`) with strict path validation.
+  - **[tools.py](src/core/tools.py)**: Custom MCP tools with strict path validation against workspace root.
   - **[git.py](src/core/git.py)**: Branch detection and dirty-tree status for HUD footers.
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 
 - **[src/handlers/](src/handlers/)** — Telegram Handlers:
-  - **[commands.py](src/handlers/commands.py)**: All 24 bot commands (`/start`, `/help`, `/plan`, `/model`, `/diff`, `/review`, `/resume`, etc.).
+  - **[commands.py](src/handlers/commands.py)**: All bot commands (`/start`, `/help`, `/plan`, `/model`, `/undo`, `/diff`, `/review`, `/resume`, etc.).
   - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements interaction callback — when agent needs permission, creates `asyncio.Future` + inline keyboard.
   - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 

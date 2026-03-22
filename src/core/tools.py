@@ -27,7 +27,10 @@ class ListFilesParams(BaseModel):
     )
 
 
-@define_tool(description="List files and directories in the project.")
+@define_tool(
+    description="List files and directories in the project.",
+    skip_permission=True,
+)
 async def list_files(params: ListFilesParams) -> str:
     target_path = Path(params.path)
     root = ctx.root_path
@@ -92,7 +95,10 @@ class WorkspaceReadFileParams(BaseModel):
     path: str = Field(description="The relative path of the file to read.")
 
 
-@define_tool(description="Read the content of a workspace file.")
+@define_tool(
+    description="Read the content of a workspace file.",
+    skip_permission=True,
+)
 async def workspace_read_file(params: WorkspaceReadFileParams) -> str:
     target_path = Path(params.path)
     root = ctx.root_path

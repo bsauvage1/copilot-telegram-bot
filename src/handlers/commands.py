@@ -13,7 +13,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
-from src.config import WORKSPACE_PATH
+from src.config import WORKSPACE_PATH, CHAT_TIMEOUT
 from src.core.service import service
 from src.core.context import ctx
 from src.core.instructions import (
@@ -1552,6 +1552,64 @@ async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else "\nTip: Use /infinite to enable automatic context compaction."
     )
     await update.message.reply_text(f"🗜️ Context compacted — session reset.{tip}")
+
+
+async def undo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Undo the last turn and revert file changes via the CLI /undo command."""
+    if not await security_check(update):
+        return
+    if not await check_project_selected(update):
+        return
+    if not service.session:
+        await update.message.reply_text("⚠️ No active session to undo.")
+        return
+    msg = await update.message.reply_text("↩️ Undoing last turn…")
+    try:
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(service._chat_lock.acquire()), timeout=0.0
+            )
+        except asyncio.TimeoutError:
+            await msg.edit_text(
+                "⚠️ A request is in progress — /cancel it first, then retry /undo."
+            )
+            return
+        try:
+            if not service.session:
+                await msg.edit_text("⚠️ Session was reset before undo could run.")
+                return
+            undo_parts: list[str] = []
+            prev_callback = service.current_callback
+
+            async def _capture(chunk: str) -> None:
+                undo_parts.append(chunk)
+
+            service.current_callback = _capture
+            try:
+                await service.session.send_and_wait(
+                    "/undo", timeout=CHAT_TIMEOUT
+                )
+            finally:
+                service.current_callback = prev_callback
+        finally:
+            service._chat_lock.release()
+
+        response = "".join(undo_parts).strip() or None
+        if response:
+            await msg.edit_text(
+                f"↩️ <b>Undone</b>\n\n{html.escape(response)}",
+                parse_mode="HTML",
+            )
+        else:
+            await msg.edit_text(
+                "↩️ <b>Undone</b> — last turn reverted and file changes rolled back.",
+                parse_mode="HTML",
+            )
+    except asyncio.TimeoutError:
+        await msg.edit_text("❌ Undo timed out — the CLI did not respond in time.")
+    except Exception as e:
+        logger.error("undo_command failed: %s", e, exc_info=True)
+        await msg.edit_text("❌ Undo failed — check logs for details.")
 
 
 async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

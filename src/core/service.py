@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
 from copilot import CopilotClient
+from copilot.types import SubprocessConfig
 
 from src.config import (
     WORKSPACE_PATH,
@@ -197,14 +198,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     def _build_client_config(
         self, cwd: Path, cli_path: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> SubprocessConfig:
         """Build CopilotClient config for a given cwd and optional CLI path."""
-        config: Dict[str, Any] = {"cwd": str(cwd)}
-        if GITHUB_TOKEN:
-            config["github_token"] = GITHUB_TOKEN
-        if cli_path:
-            config["cli_path"] = cli_path
-        return config
+        return SubprocessConfig(
+            cwd=str(cwd),
+            cli_path=cli_path or None,
+            github_token=GITHUB_TOKEN or None,
+        )
 
     def _discover_system_cli_path(self) -> Optional[str]:
         """Return the installed Copilot CLI path if available."""
@@ -837,11 +837,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.completion_callback = completion_callback
 
             try:
-                msg_options: dict = {
-                    "prompt": user_message,
-                    "attachments": attachments or [],
-                }
-                await self.session.send_and_wait(msg_options, timeout=CHAT_TIMEOUT)
+                await self.session.send_and_wait(
+                    user_message,
+                    attachments=attachments,
+                    timeout=CHAT_TIMEOUT,
+                )
                 # abort() causes send_and_wait to return normally once session.idle fires
                 if self._cancelled:
                     raise asyncio.CancelledError("Request cancelled by user")
