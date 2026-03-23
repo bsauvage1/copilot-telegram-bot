@@ -284,6 +284,11 @@ class EventHandlerMixin:
             )
             for a in current_agents
         }
+        current_ids: set[str] = {
+            getattr(a, "agent_id", "") or ""
+            for a in current_agents
+            if getattr(a, "agent_id", None)
+        }
         new_keys = current_keys - self._known_bg_agent_keys
         # Only update known-set when we have real data; a None/empty snapshot
         # would otherwise clear it and cause duplicate notifications next time.
@@ -299,6 +304,18 @@ class EventHandlerMixin:
             msg = f"🤖 {count} background {label} started:\n" + "\n".join(lines)
             logger.info("Notifying user of new bg agents: %s", new_keys)
             self._dispatch_async(ctx.notify_callback, msg)
+
+        # Update pending IDs and start/stop polling for completions.
+        if current_ids != self._pending_bg_agent_ids:
+            completed = self._pending_bg_agent_ids - current_ids
+            if completed:
+                logger.info("BG poll: %d agent(s) left snapshot (completed)", len(completed))
+            self._pending_bg_agent_ids = current_ids
+
+        if self._pending_bg_agent_ids:
+            self._start_bg_poll()
+        else:
+            self._cancel_bg_poll()
 
     def _on_session_idle(self, event):
         # Capture background_tasks from the SDK event payload

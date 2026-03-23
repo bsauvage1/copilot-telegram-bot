@@ -61,6 +61,10 @@ _TOOL_ALLOWLIST = frozenset(
         "fetch_copilot_cli_documentation",
         "ask_user",
         "update_todo",
+        "read_agent",
+        "write_agent",
+        "list_agents",
+        "notify_user",
     }
 )
 
@@ -340,6 +344,7 @@ class SessionMixin:
             pass
 
         logger.info("Parking current session and starting a new one...")
+        self._cancel_bg_poll()
 
         self.cleanup_temp_dir()
         self.session_id = str(uuid.uuid4())[:8]
@@ -362,6 +367,7 @@ class SessionMixin:
             self.current_model = model
             self.user_selected_model = model
         logger.info("Resetting session...")
+        self._cancel_bg_poll()
 
         self.cleanup_temp_dir()
         self.session_id = str(uuid.uuid4())[:8]
@@ -618,7 +624,10 @@ class SessionMixin:
                     "You are assisting via a Telegram bot. "
                     "Respond concisely and always use Plain text. "
                     "Avoid HTML tags. Keep responses focused and actionable. "
-                    "**Format:** Response must be **PLAIN TEXT** (no markdown code blocks, use simple bullets)."
+                    "**Format:** Response must be **PLAIN TEXT** (no markdown code blocks, use simple bullets). "
+                    "When you receive exactly [[BG_CHECK]]: call list_agents, then "
+                    "read_agent for each completed agent, and call notify_user with a "
+                    "concise result summary per completed agent. Output no visible text."
                 ),
             },
         }

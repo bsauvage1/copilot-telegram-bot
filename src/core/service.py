@@ -37,6 +37,12 @@ from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_p
 
 logger = logging.getLogger(__name__)
 
+# Injected as the sole message content when the background-agent poll fires.
+# The system message instructs the CLI to handle this silently.
+_BG_CHECK_PROMPT = "[[BG_CHECK]]"
+_BG_POLL_INTERVAL = 30  # seconds between probes
+_BG_POLL_MAX_ITERS = 20  # give up after ~10 minutes
+
 
 def _is_within(path: Path, root: Path) -> bool:
     """Check if path is within root directory (both must be resolved)."""
@@ -121,6 +127,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._bg_tasks: set[asyncio.Task] = set()  # Strong refs to fire-and-forget tasks
         self._background_tasks_snapshot: Any = None  # Latest BackgroundTasks from SESSION_IDLE
         self._known_bg_agent_keys: set[tuple[str, str]] = set()  # Track known bg agents for change detection
+        self._pending_bg_agent_ids: set[str] = set()  # agent_ids still running (for poll)
+        self._bg_poll_task: Optional[asyncio.Task] = None  # Polling task for bg completions
         self._turn_epoch: int = 0
         # Per-epoch pending sub-agent counts. Keyed by turn epoch so stale
         # completions from a previous turn can be identified and ignored
@@ -781,6 +789,64 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     def get_project_structure(self, max_depth: int = 2) -> str:
         """Returns nested project structure with file sizes."""
         return get_project_structure(self.session_info.cwd, max_depth)
+
+    # ── Background agent polling ───────────────────────────────────────
+
+    def _cancel_bg_poll(self) -> None:
+        """Cancel the background-agent completion poll, if running."""
+        if self._bg_poll_task and not self._bg_poll_task.done():
+            self._bg_poll_task.cancel()
+            logger.info("BG poll cancelled")
+        self._bg_poll_task = None
+        self._pending_bg_agent_ids.clear()
+
+    def _start_bg_poll(self) -> None:
+        """Start the background-agent completion poll if not already running."""
+        if self._bg_poll_task and not self._bg_poll_task.done():
+            return
+        self._bg_poll_task = asyncio.create_task(
+            self._bg_poll_loop(), name="bg-agent-poll"
+        )
+        self._bg_tasks.add(self._bg_poll_task)
+        self._bg_poll_task.add_done_callback(self._bg_tasks.discard)
+        logger.info("BG poll started (%d pending agents)", len(self._pending_bg_agent_ids))
+
+    async def _bg_poll_loop(self) -> None:
+        """Periodically probe the CLI to surface completed background agent results.
+
+        Sends a silent [[BG_CHECK]] message so the CLI can call read_agent and
+        notify_user for any completed agents. Stops when no agents remain or
+        the session is unavailable.
+        """
+        for _ in range(_BG_POLL_MAX_ITERS):
+            await asyncio.sleep(_BG_POLL_INTERVAL)
+
+            if not self._pending_bg_agent_ids:
+                logger.info("BG poll: no pending agents, stopping")
+                break
+            if not self.session or self.session_expired:
+                logger.info("BG poll: session unavailable, stopping")
+                break
+            # Skip if a user request is already in progress to avoid
+            # the probe queuing up ahead of the user's next message.
+            if self._chat_lock.locked():
+                logger.info("BG poll: chat locked, skipping this iteration")
+                continue
+
+            logger.info(
+                "BG poll: probing CLI (%d pending agents)",
+                len(self._pending_bg_agent_ids),
+            )
+            try:
+                await self.chat(_BG_CHECK_PROMPT)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("BG poll probe failed: %s", e)
+        else:
+            logger.info("BG poll: max iterations reached, stopping")
+
+        self._pending_bg_agent_ids.clear()
 
     # ── Chat ──────────────────────────────────────────────────────────
 
