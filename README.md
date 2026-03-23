@@ -5,7 +5,7 @@
 Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![SDK](https://img.shields.io/badge/Copilot-SDK-black)
+![SDK](https://img.shields.io/badge/Copilot%20SDK-0.2.0-black)
 ![Manager](https://img.shields.io/badge/uv-managed-purple)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
@@ -85,7 +85,7 @@ Don't just tell Copilot about the bug—**show it**.
     uv sync
     ```
     
-    > **⚠️ Important:** There may be a permission issue with the copilot SDK binary on v0.1.23. After running `uv sync`, fix the file permissions:
+    > **⚠️ Note:** There may be a permission issue with the Copilot SDK binary after install. If the bot fails to start, fix file permissions:
     > ```bash
     > chmod +x ./.venv/lib/python3.*/site-packages/copilot/bin/copilot
     > ```
