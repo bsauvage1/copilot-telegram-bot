@@ -1467,7 +1467,7 @@ async def infinite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if service.infinite_sessions_enabled:
         await update.message.reply_text(
             "♾️ Infinite Sessions: ENABLED\n"
-            "Context auto-compaction is on. Takes effect on next /clear or session reset."
+            "Context auto-compaction is on. Takes effect on next session reset."
         )
     else:
         await update.message.reply_text(
