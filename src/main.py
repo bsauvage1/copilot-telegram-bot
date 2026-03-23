@@ -16,6 +16,7 @@ from src.handlers.commands import (
     help_command,
     edit_command,
     clear_command,
+    new_command,
     usage_command,
     plan_command,
     cwd_command,
@@ -82,7 +83,8 @@ async def setup_bot_commands(application):
         BotCommand("model", "Switch AI Model"),
         BotCommand("effort", "Set reasoning effort level"),
         BotCommand("resume", "Browse & resume past sessions"),
-        BotCommand("clear", "Reset conversation memory"),
+        BotCommand("new", "Start fresh, keep previous session resumable"),
+        BotCommand("clear", "Reset conversation memory (hard reset)"),
         BotCommand("compact", "Compact context (smart reset)"),
         BotCommand("undo", "Undo last turn and revert file changes"),
         BotCommand("cancel", "Cancel in-progress request"),
@@ -219,6 +221,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("edit", edit_command))
+    app.add_handler(CommandHandler("new", new_command))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("usage", usage_command))
     app.add_handler(CommandHandler("plan", plan_command))

@@ -323,6 +323,28 @@ class SessionMixin:
 
         logger.info("Copilot Client Stopped.")
 
+    async def park_session(self):
+        """Start a fresh session without destroying the current one.
+
+        The current session is abandoned (unsubscribed) but left intact on
+        disk so it remains resumable via /resume.
+        """
+        logger.info("Parking current session and starting a new one...")
+
+        self.cleanup_temp_dir()
+        self.session_id = str(uuid.uuid4())[:8]
+        self._tool_call_names.clear()
+        self._show_file_args.clear()
+        self._session_approved_tools.clear()
+        self.last_session_usage = None
+        self.last_assistant_usage = None
+        self.session_info = SessionInfo()
+
+        self._unsubscribe_handlers()
+        self.session = None
+
+        await self._create_session()
+
     async def reset_session(self, model: Optional[str] = None):
         """Destroy the current session and create a fresh one."""
         if model:

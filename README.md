@@ -171,7 +171,8 @@ After selecting a project, a **cockpit message** appears with:
 | `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
 | `/tasks` | Show running background agents and shell tasks. |
-| `/clear` | Reset conversation memory. |
+| `/new` | Start a fresh session while keeping the previous one intact and resumable via `/resume`. |
+| `/clear` | Hard reset — destroy current session and start fresh (previous session not resumable). |
 | `/compact` | Compact context and reset session. |
 | `/infinite` | Toggle infinite sessions (automatic context compaction). |
 | `/allow_all` | Toggle (on/off) allow-all-tools mode — bypasses per-tool permission prompts. Alias: `/yolo`. |

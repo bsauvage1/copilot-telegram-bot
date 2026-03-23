@@ -498,6 +498,20 @@ async def _mode_reply(update, emoji: str, label: str, rpc_ok: bool):
     )
 
 
+async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await security_check(update):
+        return
+    if not await check_project_selected(update):
+        return
+    context.user_data["plan_mode"] = False
+    service.agent_mode = "interactive"
+    await service.park_session()
+    await update.message.reply_text(
+        "🆕 New session started.\n"
+        "Previous session is preserved — use /resume to return to it."
+    )
+
+
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update):
         return
