@@ -35,11 +35,14 @@ from src.core.session import SessionMixin
 from src.core.prefs import apply_prefs, save_prefs as _save_prefs
 from src.core.instructions import USER_INSTRUCTIONS_PATH, project_instructions_path
 
+import secrets
+
 logger = logging.getLogger(__name__)
 
 # Injected as the sole message content when the background-agent poll fires.
+# Generated at startup so it cannot be replicated by an external user.
 # The system message instructs the CLI to handle this silently.
-_BG_CHECK_PROMPT = "[[BG_CHECK]]"
+_BG_CHECK_PROMPT = f"[[BG_CHECK:{secrets.token_hex(8)}]]"
 _BG_POLL_INTERVAL = 30  # seconds between probes
 _BG_POLL_MAX_ITERS = 20  # give up after ~10 minutes
 
@@ -129,6 +132,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._known_bg_agent_keys: set[tuple[str, str]] = set()  # Track known bg agents for change detection
         self._pending_bg_agent_ids: set[str] = set()  # agent_ids still running (for poll)
         self._bg_poll_task: Optional[asyncio.Task] = None  # Polling task for bg completions
+        self._bg_check_prompt: str = _BG_CHECK_PROMPT  # Session-specific sentinel (set at init)
         self._turn_epoch: int = 0
         # Per-epoch pending sub-agent counts. Keyed by turn epoch so stale
         # completions from a previous turn can be identified and ignored
@@ -818,35 +822,38 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         notify_user for any completed agents. Stops when no agents remain or
         the session is unavailable.
         """
-        for _ in range(_BG_POLL_MAX_ITERS):
-            await asyncio.sleep(_BG_POLL_INTERVAL)
+        try:
+            for _ in range(_BG_POLL_MAX_ITERS):
+                await asyncio.sleep(_BG_POLL_INTERVAL)
 
-            if not self._pending_bg_agent_ids:
-                logger.info("BG poll: no pending agents, stopping")
-                break
-            if not self.session or self.session_expired:
-                logger.info("BG poll: session unavailable, stopping")
-                break
-            # Skip if a user request is already in progress to avoid
-            # the probe queuing up ahead of the user's next message.
-            if self._chat_lock.locked():
-                logger.info("BG poll: chat locked, skipping this iteration")
-                continue
+                if not self._pending_bg_agent_ids:
+                    logger.info("BG poll: no pending agents, stopping")
+                    break
+                if not self.session or self.session_expired:
+                    logger.info("BG poll: session unavailable, stopping")
+                    break
+                # Best-effort: skip this iteration if a user request is in
+                # progress. Not atomic, but avoids queuing the probe ahead of
+                # the user's next message in the common case.
+                if self._chat_lock.locked():
+                    logger.info("BG poll: chat locked, skipping this iteration")
+                    continue
 
-            logger.info(
-                "BG poll: probing CLI (%d pending agents)",
-                len(self._pending_bg_agent_ids),
-            )
-            try:
-                await self.chat(_BG_CHECK_PROMPT)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning("BG poll probe failed: %s", e)
-        else:
-            logger.info("BG poll: max iterations reached, stopping")
-
-        self._pending_bg_agent_ids.clear()
+                logger.info(
+                    "BG poll: probing CLI (%d pending agents)",
+                    len(self._pending_bg_agent_ids),
+                )
+                try:
+                    await self.chat(_BG_CHECK_PROMPT)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("BG poll probe failed: %s", e)
+            else:
+                logger.info("BG poll: max iterations reached, stopping")
+        except asyncio.CancelledError:
+            logger.info("BG poll: cancelled")
+            raise
 
     # ── Chat ──────────────────────────────────────────────────────────
 

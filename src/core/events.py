@@ -306,11 +306,20 @@ class EventHandlerMixin:
             self._dispatch_async(ctx.notify_callback, msg)
 
         # Update pending IDs and start/stop polling for completions.
-        if current_ids != self._pending_bg_agent_ids:
+        # Mirror the guard on _known_bg_agent_keys: only update when the
+        # snapshot is non-empty. An empty snapshot after a [[BG_CHECK]]
+        # probe (normal for a tool-only turn) must not clear the set and
+        # cancel the poll prematurely.
+        # Use in-place mutation to avoid aliasing issues with _cancel_bg_poll.
+        if current_agents:
             completed = self._pending_bg_agent_ids - current_ids
             if completed:
-                logger.info("BG poll: %d agent(s) left snapshot (completed)", len(completed))
-            self._pending_bg_agent_ids = current_ids
+                logger.info(
+                    "BG poll: %d agent(s) left snapshot (completed)",
+                    len(completed),
+                )
+            self._pending_bg_agent_ids.clear()
+            self._pending_bg_agent_ids.update(current_ids)
 
         if self._pending_bg_agent_ids:
             self._start_bg_poll()

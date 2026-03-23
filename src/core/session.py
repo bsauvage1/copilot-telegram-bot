@@ -62,7 +62,6 @@ _TOOL_ALLOWLIST = frozenset(
         "ask_user",
         "update_todo",
         "read_agent",
-        "write_agent",
         "list_agents",
         "notify_user",
     }
@@ -367,6 +366,10 @@ class SessionMixin:
             self.current_model = model
             self.user_selected_model = model
         logger.info("Resetting session...")
+        # Drain any in-flight poll probe before tearing down the session,
+        # matching the pattern in park_session().
+        async with self._chat_lock:
+            pass
         self._cancel_bg_poll()
 
         self.cleanup_temp_dir()
@@ -625,7 +628,7 @@ class SessionMixin:
                     "Respond concisely and always use Plain text. "
                     "Avoid HTML tags. Keep responses focused and actionable. "
                     "**Format:** Response must be **PLAIN TEXT** (no markdown code blocks, use simple bullets). "
-                    "When you receive exactly [[BG_CHECK]]: call list_agents, then "
+                    f"When you receive exactly {self._bg_check_prompt}: call list_agents, then "
                     "read_agent for each completed agent, and call notify_user with a "
                     "concise result summary per completed agent. Output no visible text."
                 ),
