@@ -328,7 +328,17 @@ class SessionMixin:
 
         The current session is abandoned (unsubscribed) but left intact on
         disk so it remains resumable via /resume.
+
+        Note: the old SDK session handle is not explicitly closed because no
+        SDK API exists to release in-memory resources without removing on-disk
+        session state. The handle will be GC'd after the server-side timeout.
+        The on_session_end hook for the parked session is rendered inert via
+        the session-ID guard built into every _create_session() call.
         """
+        # Drain any in-flight request before touching shared state.
+        async with self._chat_lock:
+            pass
+
         logger.info("Parking current session and starting a new one...")
 
         self.cleanup_temp_dir()
@@ -451,13 +461,26 @@ class SessionMixin:
             self.session = None
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
+        _bound_sid = self.session_id
+
+        async def _guarded_session_end(input_data, invocation):
+            if self.session_id != _bound_sid:
+                logger.info(
+                    "Ignoring session_end for parked session %s "
+                    "(current: %s)",
+                    _bound_sid,
+                    self.session_id,
+                )
+                return None
+            return await self._on_session_end(input_data, invocation)
+
         resume_config = {
             "model": model,
             "streaming": self.streaming_enabled,
             "on_permission_request": self._on_permission_request,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
-                "on_session_end": self._on_session_end,
+                "on_session_end": _guarded_session_end,
             },
             "on_user_input_request": self._user_input_bridge,
         }
@@ -566,12 +589,27 @@ class SessionMixin:
         else:
             logger.info("Creating new session with CLI default model")
 
+        # Capture session_id at bind-time so the hook is a no-op for any
+        # parked (abandoned) session that outlives this one server-side.
+        _bound_sid = self.session_id
+
+        async def _guarded_session_end(input_data, invocation):
+            if self.session_id != _bound_sid:
+                logger.info(
+                    "Ignoring session_end for parked session %s "
+                    "(current: %s)",
+                    _bound_sid,
+                    self.session_id,
+                )
+                return None
+            return await self._on_session_end(input_data, invocation)
+
         session_config = {
             "streaming": self.streaming_enabled,
             "on_permission_request": self._on_permission_request,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
-                "on_session_end": self._on_session_end,
+                "on_session_end": _guarded_session_end,
             },
             "on_user_input_request": self._user_input_bridge,
             "system_message": {

@@ -505,11 +505,20 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     context.user_data["plan_mode"] = False
     service.agent_mode = "interactive"
-    await service.park_session()
-    await update.message.reply_text(
-        "🆕 New session started.\n"
-        "Previous session is preserved — use /resume to return to it."
-    )
+    had_session = service.session is not None
+    try:
+        await service.park_session()
+    except Exception as e:
+        logger.error(f"park_session failed: {e}")
+        await update.message.reply_text(
+            "❌ Failed to start a new session.\n"
+            "Try /clear or /restart to recover."
+        )
+        return
+    msg = "🆕 New session started."
+    if had_session:
+        msg += "\nPrevious session is preserved — use /resume to return to it."
+    await update.message.reply_text(msg)
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
