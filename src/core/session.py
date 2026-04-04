@@ -34,7 +34,7 @@ from src.core.instructions import (
     safe_read_instructions,
     EMPTY_FILE_SENTINEL,
 )
-from copilot.types import PermissionRequestResult
+from copilot.session import PermissionRequestResult
 from copilot.generated.session_events import PermissionRequestKind
 
 logger = logging.getLogger(__name__)

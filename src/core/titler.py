@@ -115,7 +115,7 @@ async def _run_title_generation(session_id: str, first_message: str) -> None:
     title: str | None = None
     temp_session = None
     try:
-        from copilot.types import PermissionHandler
+        from copilot.session import PermissionHandler
 
         temp_session = await service.client.create_session(
             on_permission_request=PermissionHandler.approve_all,

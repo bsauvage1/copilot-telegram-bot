@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
 from copilot import CopilotClient
-from copilot.types import SubprocessConfig
+from copilot import SubprocessConfig
 
 from src.config import (
     WORKSPACE_PATH,
