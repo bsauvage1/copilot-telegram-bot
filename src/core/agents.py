@@ -4,6 +4,11 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+try:
+    from copilot.generated.rpc import ToolsListRequest
+except ImportError:
+    from copilot.generated.rpc import ToolsListParams as ToolsListRequest
+
 AGENTS_DIR = Path.home() / ".copilot" / "agents"
 
 _cached_builtin_agent_keys: list[str] | None = None
@@ -25,9 +30,7 @@ async def get_builtin_agent_keys(client: Any) -> list[str]:
     if _cached_builtin_agent_keys is not None:
         return _cached_builtin_agent_keys
     try:
-        from copilot.generated.rpc import ToolsListParams
-
-        result = await client.rpc.tools.list(ToolsListParams(model=None))
+        result = await client.rpc.tools.list(ToolsListRequest(model=None))
         for tool in result.tools:
             if tool.name == "task" and tool.parameters:
                 props = tool.parameters.get("properties", {})

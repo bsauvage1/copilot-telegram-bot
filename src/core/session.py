@@ -34,7 +34,7 @@ from src.core.instructions import (
     safe_read_instructions,
     EMPTY_FILE_SENTINEL,
 )
-from copilot.session import PermissionRequestResult
+from copilot.session import PermissionHandler, PermissionRequestResult
 from copilot.generated.session_events import PermissionRequestKind
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,34 @@ def _is_reasoning_unsupported_error(error: Exception) -> bool:
         "does not support reasoning effort" in message
         or "does not support reasoning_effort" in message
     )
+
+
+def _permission_kind(kind: str) -> str:
+    """Return the installed SDK's permission result kind for the desired action."""
+    try:
+        approved_kind = PermissionHandler.approve_all(None, {}).kind
+    except Exception:
+        approved_kind = "approved"
+
+    if approved_kind == "approve-once":
+        return {
+            "approve": "approve-once",
+            "reject": "reject",
+            "user-not-available": "user-not-available",
+        }[kind]
+
+    return {
+        "approve": "approved",
+        "reject": "denied-interactively-by-user",
+        "user-not-available": (
+            "denied-no-approval-rule-and-could-not-request-from-user"
+        ),
+    }[kind]
+
+
+def _permission_result(kind: str) -> PermissionRequestResult:
+    """Create a PermissionRequestResult compatible with the installed SDK."""
+    return PermissionRequestResult(kind=_permission_kind(kind))
 
 
 # ── Tool allowlist (auto-approved without asking user) ────────────────
@@ -475,8 +503,7 @@ class SessionMixin:
         async def _guarded_session_end(input_data, invocation):
             if self.session_id != _bound_sid:
                 logger.info(
-                    "Ignoring session_end for parked session %s "
-                    "(current: %s)",
+                    "Ignoring session_end for parked session %s (current: %s)",
                     _bound_sid,
                     self.session_id,
                 )
@@ -605,8 +632,7 @@ class SessionMixin:
         async def _guarded_session_end(input_data, invocation):
             if self.session_id != _bound_sid:
                 logger.info(
-                    "Ignoring session_end for parked session %s "
-                    "(current: %s)",
+                    "Ignoring session_end for parked session %s (current: %s)",
                     _bound_sid,
                     self.session_id,
                 )
@@ -807,7 +833,7 @@ class SessionMixin:
 
         if self.allow_all_tools:
             logger.info(f"✅ Auto-approved (allow_all mode): {kind.value}")
-            return PermissionRequestResult(kind="approved")
+            return _permission_result("approve")
 
         # Safe read-only / non-destructive operations — always auto-approve.
         if kind in (
@@ -816,7 +842,7 @@ class SessionMixin:
             PermissionRequestKind.MEMORY,
         ):
             logger.info(f"✅ Auto-approved safe kind: {kind.value}")
-            return PermissionRequestResult(kind="approved")
+            return _permission_result("approve")
 
         # SHELL, WRITE, and MCP all require user approval below.
         if kind == PermissionRequestKind.MCP:
@@ -826,16 +852,14 @@ class SessionMixin:
             display_name = request.tool_name or kind.value
             display_args = request.args or {}
 
-        _denied = PermissionRequestResult(
-            kind="denied-no-approval-rule-and-could-not-request-from-user"
-        )
+        _denied = _permission_result("user-not-available")
 
         # Check session-wide approval granted earlier this session.
         # Only the specific display_name is stored (not the generic kind.value),
         # so the lookup is an exact match against the approved tool name.
         if display_name in self._session_approved_tools:
             logger.info(f"✅ Auto-approved (session rule): {display_name}")
-            return PermissionRequestResult(kind="approved")
+            return _permission_result("approve")
 
         if not self.interaction_callback:
             logger.warning(
@@ -871,14 +895,14 @@ class SessionMixin:
                 # or any other tool that shares the same generic kind value.
                 self._session_approved_tools.add(display_name)
                 logger.info(f"✅ User approved for session: {display_name}")
-                return PermissionRequestResult(kind="approved")
+                return _permission_result("approve")
 
             if result == "allow":
                 logger.info(f"✅ User approved {kind.value}: {display_name}")
-                return PermissionRequestResult(kind="approved")
+                return _permission_result("approve")
 
             logger.info(f"❌ User denied {kind.value}: {display_name}")
-            return PermissionRequestResult(kind="denied-interactively-by-user")
+            return _permission_result("reject")
 
         except (asyncio.TimeoutError, asyncio.CancelledError):
             logger.warning(
@@ -924,12 +948,12 @@ class SessionMixin:
         # This avoids a double-prompt race where both hooks fire concurrently
         # for the same bash/create call.
         #
-        # ARCHITECTURAL NOTE (github-copilot-sdk==0.1.32):
+        # ARCHITECTURAL NOTE:
         # The "ask" permissionDecision value was introduced in SDK ≥0.1.28.
         # If the SDK is downgraded below that version this return value will
         # silently fall-through to allow, creating a fail-open security hole.
         # Always pin github-copilot-sdk in pyproject.toml to a version that
-        # supports "ask" (currently pinned at ==0.1.32).
+        # supports "ask".
         logger.info(f"🔔 Deferring to permission system for tool: {tool_name}")
         return {"permissionDecision": "ask"}
 
