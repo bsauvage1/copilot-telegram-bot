@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict
 
-from copilot.generated.session_events import SessionEventType
+from copilot.session_events import SessionEventType
 
 logger = logging.getLogger(__name__)
 

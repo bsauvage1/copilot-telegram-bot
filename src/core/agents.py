@@ -4,10 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-try:
-    from copilot.generated.rpc import ToolsListRequest
-except ImportError:
-    from copilot.generated.rpc import ToolsListParams as ToolsListRequest
+from copilot.rpc import ToolsListRequest
 
 AGENTS_DIR = Path.home() / ".copilot" / "agents"
 

@@ -13,8 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
-from copilot import CopilotClient
-from copilot import SubprocessConfig
+from copilot import CopilotClient, RuntimeConnection
 
 from src.config import (
     WORKSPACE_PATH,
@@ -208,15 +207,16 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         logger.info(f"Workspace change complete: {current_root} -> {ctx.root_path}")
         return str(ctx.root_path)
 
-    def _build_client_config(
+    def _build_client_kwargs(
         self, cwd: Path, cli_path: Optional[str] = None
-    ) -> SubprocessConfig:
-        """Build CopilotClient config for a given cwd and optional CLI path."""
-        return SubprocessConfig(
-            cwd=str(cwd),
-            cli_path=cli_path or None,
-            github_token=GITHUB_TOKEN or None,
-        )
+    ) -> dict[str, Any]:
+        """Build CopilotClient kwargs for a given cwd and optional CLI path."""
+        kwargs: dict[str, Any] = {"working_directory": str(cwd)}
+        if GITHUB_TOKEN:
+            kwargs["github_token"] = GITHUB_TOKEN
+        if cli_path:
+            kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
+        return kwargs
 
     def _discover_system_cli_path(self) -> Optional[str]:
         """Return the installed Copilot CLI path if available."""
@@ -254,14 +254,14 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self._active_cli_source = "system"
             logger.info(f"🔧 Preferring system Copilot CLI: {self._system_cli_path}")
             return CopilotClient(
-                self._build_client_config(cwd, cli_path=self._system_cli_path)
+                **self._build_client_kwargs(cwd, cli_path=self._system_cli_path)
             )
 
         self._active_cli_path = self._bundled_cli_path
         self._active_cli_source = "bundled" if self._bundled_cli_path else "unknown"
         if self._bundled_cli_path:
             logger.info(f"📦 Using bundled Copilot CLI: {self._bundled_cli_path}")
-        return CopilotClient(self._build_client_config(cwd))
+        return CopilotClient(**self._build_client_kwargs(cwd))
 
     def should_fallback_to_bundled_cli(self, error: Exception) -> bool:
         """Return True when the system CLI should be replaced with bundled CLI."""
@@ -283,7 +283,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._active_cli_source = "bundled"
         self._cli_fallback_reason = reason
         self.client = CopilotClient(
-            self._build_client_config(ctx.root_path, cli_path=self._bundled_cli_path)
+            **self._build_client_kwargs(
+                ctx.root_path, cli_path=self._bundled_cli_path
+            )
         )
         logger.info(f"📦 Falling back to bundled Copilot CLI: {self._bundled_cli_path}")
         return True
@@ -410,7 +412,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     ) -> tuple[bool, Optional[str]]:
         """Check whether a CLI binary can complete the SDK startup handshake."""
         probe_client = CopilotClient(
-            self._build_client_config(cwd or ctx.root_path, cli_path=cli_path)
+            **self._build_client_kwargs(cwd or ctx.root_path, cli_path=cli_path)
         )
         started = False
         try:

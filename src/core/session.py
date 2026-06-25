@@ -11,7 +11,7 @@ import uuid
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from src.config import (
     DEFAULT_MODEL,
@@ -34,8 +34,12 @@ from src.core.instructions import (
     safe_read_instructions,
     EMPTY_FILE_SENTINEL,
 )
-from copilot.session import PermissionHandler, PermissionRequestResult
-from copilot.generated.session_events import PermissionRequestKind
+from copilot.rpc import (
+    PermissionDecisionApproveOnce,
+    PermissionDecisionReject,
+    PermissionDecisionUserNotAvailable,
+)
+from copilot.session import PermissionHandler
 
 logger = logging.getLogger(__name__)
 
@@ -49,32 +53,25 @@ def _is_reasoning_unsupported_error(error: Exception) -> bool:
     )
 
 
-def _permission_kind(kind: str) -> str:
-    """Return the installed SDK's permission result kind for the desired action."""
-    try:
-        approved_kind = PermissionHandler.approve_all(None, {}).kind
-    except Exception:
-        approved_kind = "approved"
-
-    if approved_kind == "approve-once":
-        return {
-            "approve": "approve-once",
-            "reject": "reject",
-            "user-not-available": "user-not-available",
-        }[kind]
-
-    return {
-        "approve": "approved",
-        "reject": "denied-interactively-by-user",
-        "user-not-available": (
-            "denied-no-approval-rule-and-could-not-request-from-user"
-        ),
-    }[kind]
+_SAFE_PERMISSION_KINDS = frozenset({"read", "url", "memory"})
+_DESTRUCTIVE_PERMISSION_KINDS = frozenset({"shell", "write", "mcp"})
 
 
-def _permission_result(kind: str) -> PermissionRequestResult:
-    """Create a PermissionRequestResult compatible with the installed SDK."""
-    return PermissionRequestResult(kind=_permission_kind(kind))
+def _permission_kind_name(kind: Any) -> str:
+    """Return a stable string for permission kinds across SDK versions."""
+    value = getattr(kind, "value", kind)
+    return value if isinstance(value, str) else str(value)
+
+
+def _permission_result(kind: str) -> Any:
+    """Create a permission decision for the active SDK."""
+    if kind == "approve":
+        return PermissionDecisionApproveOnce()
+    if kind == "reject":
+        return PermissionDecisionReject()
+    if kind == "user-not-available":
+        return PermissionDecisionUserNotAvailable()
+    raise ValueError(f"Unknown permission decision: {kind}")
 
 
 # ── Tool allowlist (auto-approved without asking user) ────────────────
@@ -181,7 +178,7 @@ def _patch_session_attachments(session_id: str) -> None:
 
 
 def _apply_agent_config(svc, cfg: dict) -> None:
-    """Inject config_dir and custom_agents into a session config dict.
+    """Inject config_directory and custom_agents into a session config dict.
 
     Always registers all installed agents so the CLI binary includes them in
     the task tool's agent_type enum (required since SDK v0.1.28 — configDir
@@ -191,7 +188,7 @@ def _apply_agent_config(svc, cfg: dict) -> None:
     infer=False so the runtime uses it without override; all other agents are
     registered with infer=True so the model can invoke them on demand.
     """
-    cfg["config_dir"] = str(AGENTS_DIR.parent)  # ~/.copilot
+    cfg["config_directory"] = str(AGENTS_DIR.parent)  # ~/.copilot
 
     available = get_available_agents()
     if not available:
@@ -823,34 +820,43 @@ class SessionMixin:
 
     async def _on_permission_request(self, request, invocation=None):
         """Gate built-in CLI tool execution via Telegram Allow/Deny UI."""
-        kind = request.kind
+        kind = _permission_kind_name(request.kind)
         logger.debug(
-            f"🔐 _on_permission_request CALLED | kind={kind.value} |"
+            f"🔐 _on_permission_request CALLED | kind={kind} |"
             f" tool={getattr(request, 'tool_name', None)} |"
             f" file={getattr(request, 'file_name', None) or getattr(request, 'path', None)} |"
             f" interaction_callback={self.interaction_callback is not None}"
         )
 
         if self.allow_all_tools:
-            logger.info(f"✅ Auto-approved (allow_all mode): {kind.value}")
+            logger.info(f"✅ Auto-approved (allow_all mode): {kind}")
             return _permission_result("approve")
 
         # Safe read-only / non-destructive operations — always auto-approve.
-        if kind in (
-            PermissionRequestKind.READ,
-            PermissionRequestKind.URL,
-            PermissionRequestKind.MEMORY,
-        ):
-            logger.info(f"✅ Auto-approved safe kind: {kind.value}")
+        if kind in _SAFE_PERMISSION_KINDS:
+            logger.info(f"✅ Auto-approved safe kind: {kind}")
             return _permission_result("approve")
 
         # SHELL, WRITE, and MCP all require user approval below.
-        if kind == PermissionRequestKind.MCP:
-            display_name = f"mcp:{request.server_name}/{request.tool_name}"
-            display_args: dict = request.args or {}
+        if kind == "mcp":
+            server_name = getattr(request, "server_name", "unknown")
+            tool_name = getattr(request, "tool_name", "unknown")
+            display_name = f"mcp:{server_name}/{tool_name}"
+            display_args: dict = getattr(request, "args", None) or {}
+        elif kind == "shell":
+            display_name = "bash"
+            display_args = {
+                "command": getattr(request, "full_command_text", ""),
+            }
+        elif kind == "write":
+            display_name = "edit"
+            display_args = {
+                "path": getattr(request, "file_name", ""),
+                "diff": getattr(request, "diff", ""),
+            }
         else:
-            display_name = request.tool_name or kind.value
-            display_args = request.args or {}
+            display_name = getattr(request, "tool_name", None) or kind
+            display_args = getattr(request, "args", None) or {}
 
         _denied = _permission_result("user-not-available")
 
@@ -863,21 +869,19 @@ class SessionMixin:
 
         if not self.interaction_callback:
             logger.warning(
-                f"🔴 No interaction_callback — denying {kind.value}: {display_name}"
+                f"🔴 No interaction_callback — denying {kind}: {display_name}"
             )
             return _denied
 
         try:
             logger.info(
-                f"🔔 Requesting user permission for {kind.value}: {display_name}"
+                f"🔔 Requesting user permission for {kind}: {display_name}"
             )
             # Always offer session approval for destructive kinds (SHELL, WRITE, MCP).
             # The CLI rarely sets canOfferSessionApproval for these kinds.
-            can_session = kind in (
-                PermissionRequestKind.SHELL,
-                PermissionRequestKind.WRITE,
-                PermissionRequestKind.MCP,
-            ) or bool(getattr(request, "can_offer_session_approval", False))
+            can_session = kind in _DESTRUCTIVE_PERMISSION_KINDS or bool(
+                getattr(request, "can_offer_session_approval", False)
+            )
             perm_req = _PermissionRequest(
                 display_name,
                 display_args,
@@ -898,16 +902,16 @@ class SessionMixin:
                 return _permission_result("approve")
 
             if result == "allow":
-                logger.info(f"✅ User approved {kind.value}: {display_name}")
+                logger.info(f"✅ User approved {kind}: {display_name}")
                 return _permission_result("approve")
 
-            logger.info(f"❌ User denied {kind.value}: {display_name}")
+            logger.info(f"❌ User denied {kind}: {display_name}")
             return _permission_result("reject")
 
         except (asyncio.TimeoutError, asyncio.CancelledError):
             logger.warning(
                 f"⏱️ Permission timeout or cancellation, denying"
-                f" {kind.value}: {display_name}"
+                f" {kind}: {display_name}"
             )
             return _denied
         except Exception as e:

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time as _time_mod
 
-from copilot.generated.session_events import SessionEventType
+from copilot.session_events import SessionEventType
 
 from src.core.context import ctx
 from src.ui.formatters import format_tool_start, format_tool_complete, truncate_text

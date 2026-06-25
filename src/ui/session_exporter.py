@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
-from copilot.generated.session_events import SessionEvent, SessionEventType
+from copilot.session_events import SessionEvent, SessionEventType
 
 logger = logging.getLogger(__name__)
 
