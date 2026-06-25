@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 _LATEST_CACHE_TTL_SECONDS = 3600
 _LATEST_CACHE_ERROR_TTL_SECONDS = 60
 _LATEST_CACHE: dict[str, Any] = {"expires_at": 0.0, "data": None}
+_CANONICAL_SDK_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
 
 def _extract_version(version_text: str) -> str:
@@ -59,6 +60,40 @@ def _parse_version(version_text: str) -> tuple[int, int, int] | None:
         return int(major), int(minor), int(patch)
     except Exception:
         return None
+
+
+def _parse_canonical_sdk_tag(tag_name: str) -> tuple[int, int, int] | None:
+    """Parse canonical SDK tags (vX.Y.Z) and ignore language-prefixed tags."""
+    match = _CANONICAL_SDK_TAG.fullmatch((tag_name or "").strip())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def _select_latest_canonical_sdk_release(
+    releases: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Select the newest stable canonical SDK release from GitHub releases."""
+    latest_release: dict[str, Any] | None = None
+    latest_version: tuple[int, int, int] | None = None
+
+    for release in releases:
+        tag = release.get("tag_name", "")
+        parsed = _parse_canonical_sdk_tag(tag)
+        if not parsed:
+            continue
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        if latest_version is None or parsed > latest_version:
+            latest_version = parsed
+            latest_release = release
+
+    return latest_release
+
+
+def _is_noncanonical_sdk_release_url(url: str) -> bool:
+    """Return True for language-prefixed release links like /tag/java/v1.0.4."""
+    return "/releases/tag/" in url and "/releases/tag/v" not in url
 
 
 def _compare_versions(current: str, latest: str) -> str:
@@ -101,13 +136,17 @@ async def _get_latest_versions() -> dict[str, str]:
     now = time.time()
     cached = _LATEST_CACHE.get("data")
     if cached and now < float(_LATEST_CACHE.get("expires_at", 0.0)):
-        return cached
+        cached_sdk_url = str(cached.get("sdk_release_url", ""))
+        if not _is_noncanonical_sdk_release_url(cached_sdk_url):
+            return cached
 
     async with _latest_versions_lock:
         # Re-check after acquiring lock — another coroutine may have refreshed
         cached = _LATEST_CACHE.get("data")
         if cached and time.time() < float(_LATEST_CACHE.get("expires_at", 0.0)):
-            return cached
+            cached_sdk_url = str(cached.get("sdk_release_url", ""))
+            if not _is_noncanonical_sdk_release_url(cached_sdk_url):
+                return cached
 
         latest = {
             "cli_latest": "unknown",
@@ -122,10 +161,19 @@ async def _get_latest_versions() -> dict[str, str]:
         sdk_release_task = _fetch_json(
             "https://api.github.com/repos/github/copilot-sdk/releases/latest"
         )
+        sdk_releases_task = _fetch_json(
+            "https://api.github.com/repos/github/copilot-sdk/releases?per_page=100"
+        )
         sdk_pypi_task = _fetch_json("https://pypi.org/pypi/github-copilot-sdk/json")
 
-        cli_json, sdk_release_json, sdk_pypi_json = await asyncio.gather(
-            cli_task, sdk_release_task, sdk_pypi_task, return_exceptions=True
+        cli_json, sdk_release_json, sdk_releases_json, sdk_pypi_json = (
+            await asyncio.gather(
+                cli_task,
+                sdk_release_task,
+                sdk_releases_task,
+                sdk_pypi_task,
+                return_exceptions=True,
+            )
         )
 
         if isinstance(cli_json, dict):
@@ -134,13 +182,31 @@ async def _get_latest_versions() -> dict[str, str]:
                 cli_json.get("html_url") or latest["cli_release_url"]
             )
 
-        if isinstance(sdk_release_json, dict):
-            latest["sdk_latest"] = _extract_version(
-                sdk_release_json.get("tag_name", "")
+        if isinstance(sdk_releases_json, list):
+            # Prefer canonical top-level SDK tags like v1.0.4 over language-prefixed tags.
+            canonical = _select_latest_canonical_sdk_release(
+                [release for release in sdk_releases_json if isinstance(release, dict)]
             )
-            latest["sdk_release_url"] = (
-                sdk_release_json.get("html_url") or latest["sdk_release_url"]
-            )
+            if canonical:
+                canonical_tag = canonical.get("tag_name", "")
+                latest["sdk_latest"] = _extract_version(canonical_tag)
+                latest["sdk_release_url"] = (
+                    canonical.get("html_url")
+                    or f"https://github.com/github/copilot-sdk/releases/tag/{canonical_tag}"
+                )
+
+        if latest["sdk_latest"] == "unknown" and isinstance(sdk_release_json, dict):
+            sdk_version = _extract_version(sdk_release_json.get("tag_name", ""))
+            latest["sdk_latest"] = sdk_version
+            if sdk_version != "unknown":
+                latest["sdk_release_url"] = (
+                    f"https://github.com/github/copilot-sdk/releases/tag/v{sdk_version}"
+                )
+            else:
+                latest["sdk_release_url"] = (
+                    sdk_release_json.get("html_url") or latest["sdk_release_url"]
+                )
+
         if latest["sdk_latest"] == "unknown" and isinstance(sdk_pypi_json, dict):
             latest["sdk_latest"] = _extract_version(
                 sdk_pypi_json.get("info", {}).get("version", "")
@@ -199,6 +265,8 @@ async def _fetch_whats_changed(component: str) -> str:
     relevant = []
     for rel in releases:
         tag = rel.get("tag_name", "")
+        if component == "sdk" and not _parse_canonical_sdk_tag(tag):
+            continue
         ver = _parse_version(_extract_version(tag))
         if ver and cur < ver <= lat:
             relevant.append(rel)
