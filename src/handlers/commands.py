@@ -468,6 +468,7 @@ async def _build_versions_panel() -> tuple[str, InlineKeyboardMarkup]:
         )
         cmds.append(f'<code>uv add "github-copilot-sdk=={target}"</code>')
     if cmds:
+        cmds.append("<code>sudo systemctl restart copilot-bot</code>")
         lines.append("")
         lines.append("📦 <b>Upgrade commands:</b>")
         lines.extend(f"  {c}" for c in cmds)
