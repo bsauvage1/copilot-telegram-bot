@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "python-telegram-bot>=20.0",
     "python-dotenv>=1.0.0",
-    "github-copilot-sdk==1.0.5",
+    "github-copilot-sdk==1.0.8",
     "pydantic>=2.0",
     "mcp[cli]>=1.26.0",
 ]
