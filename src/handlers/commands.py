@@ -182,11 +182,34 @@ async def _get_latest_versions() -> dict[str, str]:
                 cli_json.get("html_url") or latest["cli_release_url"]
             )
 
-        if isinstance(sdk_releases_json, list):
-            # Prefer canonical top-level SDK tags like v1.0.4 over language-prefixed tags.
-            canonical = _select_latest_canonical_sdk_release(
-                [release for release in sdk_releases_json if isinstance(release, dict)]
+        sdk_releases = (
+            [r for r in sdk_releases_json if isinstance(r, dict)]
+            if isinstance(sdk_releases_json, list)
+            else []
+        )
+
+        # PyPI is authoritative: it is what `uv add` resolves against. GitHub
+        # tags the multi-language repo before the Python wheel is uploaded, so
+        # trusting GitHub first suggests versions uv cannot install.
+        if isinstance(sdk_pypi_json, dict):
+            pypi_version = _extract_version(
+                sdk_pypi_json.get("info", {}).get("version", "")
             )
+            if pypi_version != "unknown":
+                latest["sdk_latest"] = pypi_version
+                tag = f"v{pypi_version}"
+                matching = next(
+                    (r for r in sdk_releases if r.get("tag_name") == tag), None
+                )
+                latest["sdk_release_url"] = (
+                    matching.get("html_url")
+                    if matching and matching.get("html_url")
+                    else f"https://github.com/github/copilot-sdk/releases/tag/{tag}"
+                )
+
+        if latest["sdk_latest"] == "unknown" and sdk_releases:
+            # Prefer canonical top-level SDK tags like v1.0.4 over language-prefixed tags.
+            canonical = _select_latest_canonical_sdk_release(sdk_releases)
             if canonical:
                 canonical_tag = canonical.get("tag_name", "")
                 latest["sdk_latest"] = _extract_version(canonical_tag)
@@ -206,14 +229,6 @@ async def _get_latest_versions() -> dict[str, str]:
                 latest["sdk_release_url"] = (
                     sdk_release_json.get("html_url") or latest["sdk_release_url"]
                 )
-
-        if latest["sdk_latest"] == "unknown" and isinstance(sdk_pypi_json, dict):
-            latest["sdk_latest"] = _extract_version(
-                sdk_pypi_json.get("info", {}).get("version", "")
-            )
-            latest["sdk_release_url"] = (
-                "https://pypi.org/project/github-copilot-sdk/#history"
-            )
 
         _LATEST_CACHE["data"] = latest
         got_real_data = (

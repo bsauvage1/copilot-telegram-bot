@@ -138,7 +138,7 @@ async def _run_title_generation(session_id: str, first_message: str) -> None:
         if temp_session is not None:
             temp_session_id = getattr(temp_session, "session_id", None)
             try:
-                await temp_session.destroy()
+                await temp_session.disconnect()
             except Exception:
                 pass
             if temp_session_id:

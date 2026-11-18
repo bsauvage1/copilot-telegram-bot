@@ -80,6 +80,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._active_cli_path: Optional[str] = None
         self._active_cli_source: str = "unknown"
         self._cli_fallback_reason: Optional[str] = None
+        # (path, mtime) of a system CLI that failed the protocol handshake.
+        # Skips re-trying it on every client rebuild until the binary changes.
+        self._incompatible_system_cli: Optional[tuple[str, float]] = None
         self._pending_runtime_warning: Optional[str] = None
         self._prefer_cli_default_model: bool = False
         self.client = self._create_client(ctx.root_path)
@@ -229,12 +232,41 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 return candidate
         return None
 
-    def _discover_bundled_cli_path(self) -> Optional[str]:
-        """Return the SDK-bundled Copilot CLI path if available."""
+    def _discover_bundled_cli_path(self, download: bool = False) -> Optional[str]:
+        """Return the SDK-pinned Copilot CLI path if available.
+
+        Older SDKs ship the CLI inside the wheel (``_get_bundled_cli_path``).
+        SDK >= 1.0.32 instead pins a CLI version and downloads it into
+        ``~/.cache/github-copilot-sdk``; ``download=True`` fetches it on
+        first use, otherwise only an existing cache entry is returned.
+        """
         try:
             from copilot.client import _get_bundled_cli_path
 
             bundled_cli = _get_bundled_cli_path()
+        except ImportError:
+            try:
+                from copilot import _cli_download
+
+                if download:
+                    bundled_cli = _cli_download.ensure_runtime_wrapper()
+                else:
+                    # get_cached_cli_path() looks for a `copilot` binary the
+                    # runtime bundle doesn't ship; check the wrapper directly.
+                    pair_dir = (
+                        _cli_download.get_cache_dir(_cli_download.CLI_VERSION)
+                        / "prebuilds"
+                        / _cli_download.get_runtime_platform()
+                    )
+                    wrapper = pair_dir / "copilot-runtime"
+                    bundled_cli = (
+                        str(wrapper)
+                        if wrapper.is_file() and (pair_dir / "runtime.node").is_file()
+                        else None
+                    )
+            except Exception as e:
+                logger.debug(f"Could not resolve SDK-pinned CLI path: {e}")
+                return None
         except Exception as e:
             logger.debug(f"Could not resolve bundled CLI path: {e}")
             return None
@@ -247,6 +279,24 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """Create a client preferring the installed CLI before bundled fallback."""
         self._system_cli_path = self._discover_system_cli_path()
         self._bundled_cli_path = self._discover_bundled_cli_path()
+
+        if (
+            self._bundled_cli_path
+            and self._incompatible_system_cli is not None
+            and self._incompatible_system_cli
+            == self._cli_fingerprint(self._system_cli_path)
+        ):
+            self._active_cli_path = self._bundled_cli_path
+            self._active_cli_source = "bundled"
+            logger.info(
+                "📦 System CLI still incompatible; using bundled CLI: "
+                f"{self._bundled_cli_path}"
+            )
+            return CopilotClient(
+                **self._build_client_kwargs(cwd, cli_path=self._bundled_cli_path)
+            )
+
+        self._incompatible_system_cli = None
         self._cli_fallback_reason = None
 
         if self._system_cli_path:
@@ -263,22 +313,39 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             logger.info(f"📦 Using bundled Copilot CLI: {self._bundled_cli_path}")
         return CopilotClient(**self._build_client_kwargs(cwd))
 
+    @staticmethod
+    def _cli_fingerprint(cli_path: Optional[str]) -> Optional[tuple[str, float]]:
+        """Identify a CLI binary by path and mtime, so an update is noticed."""
+        if not cli_path:
+            return None
+        try:
+            return cli_path, os.path.getmtime(os.path.realpath(cli_path))
+        except OSError:
+            return None
+
     def should_fallback_to_bundled_cli(self, error: Exception) -> bool:
         """Return True when the system CLI should be replaced with bundled CLI."""
         return (
             isinstance(error, RuntimeError)
             and "protocol version mismatch" in str(error).lower()
             and self._active_cli_source == "system"
-            and bool(self._bundled_cli_path)
         )
 
     def activate_bundled_cli_fallback(self, reason: str) -> bool:
-        """Switch the active client to the bundled CLI."""
+        """Switch the active client to the bundled CLI.
+
+        Callers should resolve ``_bundled_cli_path`` first (possibly with a
+        download, off the event loop); this only does a cache lookup.
+        """
         if not self._bundled_cli_path:
             self._bundled_cli_path = self._discover_bundled_cli_path()
         if not self._bundled_cli_path:
             return False
 
+        if self._active_cli_source == "system":
+            self._incompatible_system_cli = self._cli_fingerprint(
+                self._system_cli_path
+            )
         self._active_cli_path = self._bundled_cli_path
         self._active_cli_source = "bundled"
         self._cli_fallback_reason = reason
@@ -380,7 +447,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             return "unknown"
         version_file = Path(cli_path).with_name("VERSION")
         if not version_file.is_file():
-            return "unknown"
+            # SDK >= 1.0.32 downloads its pinned CLI; no VERSION file.
+            try:
+                from copilot._cli_version import CLI_VERSION
+
+                return CLI_VERSION or "unknown"
+            except ImportError:
+                return "unknown"
         try:
             version = version_file.read_text(encoding="utf-8").strip()
         except Exception as e:

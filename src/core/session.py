@@ -301,6 +301,11 @@ class SessionMixin:
                         f"Ignoring stop error after failed client start: {stop_error}"
                     )
 
+                if not self._bundled_cli_path:
+                    # May download the SDK-pinned CLI; keep it off the loop.
+                    self._bundled_cli_path = await asyncio.to_thread(
+                        self._discover_bundled_cli_path, True
+                    )
                 if not self.activate_bundled_cli_fallback(str(e)):
                     logger.error(f"Failed to start client: {e}")
                     raise
@@ -327,9 +332,9 @@ class SessionMixin:
 
         if self.session:
             try:
-                await self.session.destroy()
+                await self.session.disconnect()
             except Exception as e:
-                logger.warning(f"Error destroying session during stop: {e}")
+                logger.warning(f"Error disconnecting session during stop: {e}")
             self.session = None
 
         if self._is_running:
@@ -412,9 +417,9 @@ class SessionMixin:
 
         if self.session:
             try:
-                await self.session.destroy()
+                await self.session.disconnect()
             except Exception as e:
-                logger.warning(f"Error destroying session: {e}")
+                logger.warning(f"Error disconnecting session: {e}")
             self.session = None
 
         await self._create_session()
@@ -489,9 +494,9 @@ class SessionMixin:
 
         if self.session:
             try:
-                await self.session.destroy()
+                await self.session.disconnect()
             except Exception as e:
-                logger.warning(f"Error destroying old session: {e}")
+                logger.warning(f"Error disconnecting old session: {e}")
             self.session = None
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
