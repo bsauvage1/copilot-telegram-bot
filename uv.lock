@@ -160,7 +160,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "github-copilot-sdk", specifier = "==1.0.32" },
+    { name = "github-copilot-sdk", specifier = "==1.0.34" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.26.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
@@ -228,7 +228,7 @@ wheels = [
 
 [[package]]
 name = "github-copilot-sdk"
-version = "1.0.32"
+version = "1.0.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -236,7 +236,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/68/d6d944042b5be8d943559fdc1d48df59feb0dcbfc0d08b638fcfa24e70f2/github_copilot_sdk-1.0.32-py3-none-any.whl", hash = "sha256:92edf1f68f8b62f715643da09b5c5c5aef5671bedbbd127720a236b021f771d1", size = 1107225, upload-time = "2026-11-12T23:10:35.882Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/3f/9b8405bf4943dfb6ecd5d0ac2179e1fab896a61bd31273c94267faeae5c9/github_copilot_sdk-1.0.34-py3-none-any.whl", hash = "sha256:0d9cffccdb59f5d90512e9b94a70d482859a5fc9e0d2d0926e1bb138a1e593c4", size = 1116400, upload-time = "2026-11-14T00:08:47.124Z" },
 ]
 
 [[package]]
