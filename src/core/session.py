@@ -27,6 +27,7 @@ from src.core.agents import (
     parse_agent_prompt,
     AGENTS_DIR,
 )
+from src.core.session_sync import session_sort_key, session_start_time
 from src.core.usage import SessionUsageTracker, SessionInfo
 from src.core.instructions import (
     USER_INSTRUCTIONS_PATH,
@@ -462,14 +463,16 @@ class SessionMixin:
                 (
                     s
                     for s in sessions
-                    if getattr(s, "sessionId", None) == self.session_info.session_id
+                    if s.session_id == self.session_info.session_id
                 ),
                 None,
             )
             if meta:
                 self.session_info.name = getattr(meta, "summary", None)
-                self.session_info.created = getattr(meta, "startTime", None)
-                self.session_info.modified = getattr(meta, "modifiedTime", None)
+                self.session_info.created = session_start_time(meta) or None
+                self.session_info.modified = (
+                    session_sort_key(meta) or None
+                )
                 logger.info(
                     f"📊 Session metadata fetched - Name: {self.session_info.name}, Created: {self.session_info.created}"
                 )
@@ -765,14 +768,14 @@ class SessionMixin:
         self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
 
     def _extract_session_start_context(self):
-        """Capture session context from session.start event via get_messages()."""
+        """Capture session context from session.start event via get_events()."""
 
-        # Note: SESSION_START event doesn't fire reliably, so we query messages.
+        # Note: SESSION_START event doesn't fire reliably, so we query events.
         # This is called synchronously after session creation — we schedule the
         # async work as a task.
         async def _extract():
             try:
-                messages = await self.session.get_messages()
+                messages = await self.session.get_events()
                 if messages and len(messages) > 0:
                     first_event = messages[0]
                     if first_event.type.value == "session.start":

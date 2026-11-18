@@ -6,6 +6,7 @@ import logging
 import re
 import socket
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -27,15 +28,32 @@ _cached_sync_client: Optional["SessionSyncClient"] = None
 
 @dataclass
 class RemoteSession:
-    """SDK-compatible session object representing a remote (un-pulled) session."""
+    """Remote (un-pulled) session, field-compatible with SDK ``SessionMetadata``."""
 
-    sessionId: str
+    session_id: str
     summary: Optional[str] = None
-    startTime: Optional[str] = None
-    modifiedTime: Optional[str] = None
+    start_time: Optional[str] = None
+    modified_time: Optional[str] = None
     cwd: Optional[str] = None
     machine: Optional[str] = None
     _remote: bool = field(default=True, init=False, repr=False)
+
+
+def _iso(value: object) -> str:
+    """Render an SDK ``datetime`` or a remote ISO string as an ISO string."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value) if value else ""
+
+
+def session_start_time(s: object) -> str:
+    """ISO start time of an SDK ``SessionMetadata`` or ``RemoteSession``."""
+    return _iso(getattr(s, "start_time", None))
+
+
+def session_sort_key(s: object) -> str:
+    """Most recent activity as an ISO string, for newest-first sorting."""
+    return _iso(getattr(s, "modified_time", None)) or session_start_time(s)
 
 
 def current_machine() -> str:
@@ -117,10 +135,10 @@ class SessionSyncClient:
                 continue
             sessions.append(
                 RemoteSession(
-                    sessionId=session_id,
+                    session_id=session_id,
                     summary=entry.get("summary") or None,
-                    startTime=entry.get("created_at"),
-                    modifiedTime=entry.get("updated_at"),
+                    start_time=entry.get("created_at"),
+                    modified_time=entry.get("updated_at"),
                     cwd=repository,
                     machine=entry.get("machine") or None,
                 )
@@ -128,7 +146,7 @@ class SessionSyncClient:
 
         return sorted(
             sessions,
-            key=lambda s: s.modifiedTime or "",
+            key=lambda s: s.modified_time or "",
             reverse=True,
         )
 

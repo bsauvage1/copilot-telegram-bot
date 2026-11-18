@@ -10,9 +10,13 @@ CLI 1.0.113 speaks SDK protocol 4. Every 1.0.x SDK speaks protocol 3, so
 the bot currently runs the SDK-pinned CLI (1.0.112 on SDK 1.0.34) through
 the bundled-CLI fallback. SDK 2.0.0 requires protocol 4 and rejects 3.
 
-## Already broken on 1.0.34 (independent of 2.0)
+## Already broken on 1.0.34 (independent of 2.0) — fixed
 
-Verified live against SDK 1.0.34 on 2026-11-18.
+Verified live against SDK 1.0.34 on 2026-11-18, and fixed the same day:
+`get_events()`, `/ping` without `get_state()`, `protocol_version`, and
+snake_case session fields everywhere (`RemoteSession` renamed to match;
+`session_sync.session_start_time` / `session_sort_key` normalize SDK
+`datetime` and remote ISO strings). The fixes use names that 2.0.0 keeps.
 
 | Where | Call | Problem |
 |---|---|---|
@@ -111,7 +115,7 @@ in-process transport, or switch to `session.rpc.mode.set/get`.
 
 ## Suggested upgrade order
 
-1. Fix the 1.0.34 breakages above (independent, can ship now).
+1. ~~Fix the 1.0.34 breakages above.~~ Done 2026-11-18.
 2. When 2.0.0 lands on PyPI: `uv add "github-copilot-sdk==2.0.0"`.
 3. Rewrite `_build_client_kwargs` / `_create_client` (mode, runtime,
    github) and decide the CLI-selection design.

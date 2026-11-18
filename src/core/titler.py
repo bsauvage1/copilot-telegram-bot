@@ -211,7 +211,7 @@ async def ensure_session_titles(sessions: list) -> None:
     """
     pending: list[tuple[str, str]] = []
     for s in sessions:
-        session_id: str = getattr(s, "sessionId", None) or ""
+        session_id: str = s.session_id or ""
         if not session_id:
             continue
         if _has_summary(session_id):

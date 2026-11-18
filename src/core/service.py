@@ -586,7 +586,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     # ── Session export ────────────────────────────────────────────────
 
     async def export_session_to_file(self) -> Optional[str]:
-        """Exports the current session history to a markdown file using SDK get_messages()."""
+        """Exports the current session history to a markdown file using SDK get_events()."""
         if not self.session:
             logger.warning("No active session to export")
             return None
@@ -595,7 +595,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             from src.ui.session_exporter import format_session_markdown
 
             logger.info("📥 Retrieving session history...")
-            events = await self.session.get_messages()
+            events = await self.session.get_events()
 
             if not events:
                 logger.warning("Session has no events to export")

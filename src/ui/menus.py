@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import GRANTED_PROJECT_PATHS
+from src.core.session_sync import session_sort_key, session_start_time
 
 
 def _read_session_cwd(session_id: str) -> Optional[str]:
@@ -166,9 +167,7 @@ def get_visible_sessions(sessions, cwd_filter: Optional[str] = None) -> list:
     """
     sorted_sessions = sorted(
         sessions,
-        key=lambda s: (
-            getattr(s, "modifiedTime", None) or getattr(s, "startTime", "") or ""
-        ),
+        key=session_sort_key,
         reverse=True,
     )
     if cwd_filter:
@@ -176,7 +175,7 @@ def get_visible_sessions(sessions, cwd_filter: Optional[str] = None) -> list:
         for s in sorted_sessions:
             if len(result) >= 10:
                 break
-            sid = getattr(s, "sessionId", None) or str(s)
+            sid = s.session_id or str(s)
             if _session_matches_cwd(sid, cwd_filter):
                 result.append(s)
         return result
@@ -185,7 +184,7 @@ def get_visible_sessions(sessions, cwd_filter: Optional[str] = None) -> list:
 
     groups: dict = OrderedDict()
     for s in sorted_sessions:
-        sid = getattr(s, "sessionId", None) or str(s)
+        sid = s.session_id or str(s)
         cwd = _read_session_cwd(sid)
         project = Path(cwd).name if cwd else "Unknown"
         if project not in groups:
@@ -210,9 +209,7 @@ def get_sessions_keyboard(
     """
     sorted_sessions = sorted(
         sessions,
-        key=lambda s: (
-            getattr(s, "modifiedTime", None) or getattr(s, "startTime", "") or ""
-        ),
+        key=session_sort_key,
         reverse=True,
     )
 
@@ -227,7 +224,7 @@ def get_sessions_keyboard(
             summary = _clean_summary(read_session_summary(session_id))
             if not summary:
                 summary = _read_plan_summary(session_id) or ""
-        start_time = getattr(s, "startTime", None) or ""
+        start_time = session_start_time(s)
         date_str = start_time[:10]
         time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id
@@ -244,7 +241,7 @@ def get_sessions_keyboard(
         # Single-project view: top 10 most recent, local and remote blended by time
         matching = []
         for s in sorted_sessions:
-            session_id = getattr(s, "sessionId", None) or str(s)
+            session_id = s.session_id or str(s)
             is_remote = getattr(s, "_remote", False)
             if is_remote:
                 matching.append((s, session_id))
@@ -268,7 +265,7 @@ def get_sessions_keyboard(
 
         groups: dict = OrderedDict()
         for s in sorted_sessions:
-            session_id = getattr(s, "sessionId", None) or str(s)
+            session_id = s.session_id or str(s)
             cwd = _read_session_cwd(session_id)
             project = Path(cwd).name if cwd else "Unknown"
             if project not in groups:
@@ -333,7 +330,7 @@ def get_sessions_text_page(
     def _matches(s) -> bool:
         if not filter_name:
             return True
-        sid = getattr(s, "sessionId", None) or str(s)
+        sid = s.session_id or str(s)
         is_remote = getattr(s, "_remote", False)
         if is_remote:
             repo = getattr(s, "cwd", None) or ""
@@ -342,9 +339,7 @@ def get_sessions_text_page(
 
     sorted_sessions = sorted(
         (s for s in sessions if _matches(s)),
-        key=lambda s: (
-            getattr(s, "modifiedTime", None) or getattr(s, "startTime", "") or ""
-        ),
+        key=session_sort_key,
         reverse=True,
     )
 
@@ -358,10 +353,10 @@ def get_sessions_text_page(
     rows: list[list[InlineKeyboardButton]] = []
 
     for s in page_sessions:
-        session_id = getattr(s, "sessionId", None) or str(s)
+        session_id = s.session_id or str(s)
         is_remote = getattr(s, "_remote", False)
         is_foreign = session_id in (foreign_ids or set())
-        start_time = getattr(s, "startTime", None) or ""
+        start_time = session_start_time(s)
         date_str = start_time[:10]
         time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id

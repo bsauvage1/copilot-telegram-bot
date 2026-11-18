@@ -1516,15 +1516,15 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Sessions created on a different machine get the 🌐 icon
         foreign_ids: set[str] = {
-            s.sessionId
+            s.session_id
             for s in remote_sessions
             if getattr(s, "machine", None) and s.machine != this_machine
         }
 
-        # Deduplicate: local wins on matching sessionId
-        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        # Deduplicate: local wins on matching session_id
+        local_ids = {s.session_id for s in sessions}
         unique_remote = [
-            s for s in remote_sessions if getattr(s, "sessionId", None) not in local_ids
+            s for s in remote_sessions if s.session_id not in local_ids
         ]
 
         if not sessions and not unique_remote:
@@ -1536,9 +1536,9 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await ensure_session_titles(visible)
         # Re-fetch local sessions so objects carry freshly written summaries
         sessions = await service.client.list_sessions()
-        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        local_ids = {s.session_id for s in sessions}
         unique_remote = [
-            s for s in unique_remote if getattr(s, "sessionId", None) not in local_ids
+            s for s in unique_remote if s.session_id not in local_ids
         ]
         all_sessions = list(sessions) + unique_remote
         # Store foreign_ids for use by pagination callbacks
@@ -1593,15 +1593,14 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     msg = await update.message.reply_text("🔄 Pinging...")
     try:
-        state = service.client.get_state()
         ping = await service.client.ping()
         auth = await service.client.get_auth_status()
         login = auth.login or "unknown"
         authenticated = "✅" if auth.isAuthenticated else "❌"
         await msg.edit_text(
             f"🟢 Copilot CLI Status\n"
-            f"• Connection: {state}\n"
-            f"• Protocol: v{ping.protocolVersion}\n"
+            f"• Connection: connected\n"
+            f"• Protocol: v{ping.protocol_version}\n"
             f"• Auth: {authenticated} {login}\n"
             f"• Host: {auth.host or 'github.com'}"
         )

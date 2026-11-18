@@ -291,7 +291,7 @@ async def _handle_session_callback(query, context):
     try:
         sessions = await service.client.list_sessions()
         session_obj = next(
-            (s for s in sessions if getattr(s, "sessionId", None) == session_id), None
+            (s for s in sessions if s.session_id == session_id), None
         )
     except Exception:
         pass
@@ -370,7 +370,11 @@ async def _handle_sessions_more_callback(query, context, page: int = 0):
     import asyncio
     from src.ui.menus import get_sessions_text_page, _SESSIONS_MORE_PAGE_SIZE
     from src.core.titler import ensure_session_titles
-    from src.core.session_sync import get_sync_client, current_machine
+    from src.core.session_sync import (
+        current_machine,
+        get_sync_client,
+        session_start_time,
+    )
 
     await query.edit_message_text("🔄 Loading sessions...")
     try:
@@ -399,21 +403,21 @@ async def _handle_sessions_more_callback(query, context, page: int = 0):
             stored
             if stored is not None
             else {
-                s.sessionId
+                s.session_id
                 for s in remote_sessions
                 if getattr(s, "machine", None) and s.machine != this_machine
             }
         )
         context.user_data["foreign_session_ids"] = foreign_ids
 
-        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        local_ids = {s.session_id for s in sessions}
         unique_remote = [
-            s for s in remote_sessions if getattr(s, "sessionId", None) not in local_ids
+            s for s in remote_sessions if s.session_id not in local_ids
         ]
 
         sorted_local = sorted(
             sessions,
-            key=lambda s: getattr(s, "startTime", "") or "",
+            key=session_start_time,
             reverse=True,
         )
         page_size = _SESSIONS_MORE_PAGE_SIZE
@@ -422,9 +426,9 @@ async def _handle_sessions_more_callback(query, context, page: int = 0):
         await ensure_session_titles(visible)
         # Re-fetch so summaries are current
         sessions = await service.client.list_sessions()
-        local_ids = {getattr(s, "sessionId", None) for s in sessions}
+        local_ids = {s.session_id for s in sessions}
         unique_remote = [
-            s for s in unique_remote if getattr(s, "sessionId", None) not in local_ids
+            s for s in unique_remote if s.session_id not in local_ids
         ]
         all_sessions = list(sessions) + unique_remote
         text, keyboard = get_sessions_text_page(
