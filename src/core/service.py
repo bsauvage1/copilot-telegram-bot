@@ -663,6 +663,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                             mult = f"{int(multiplier_val)}x"
                         else:
                             mult = f"{multiplier_val}x"
+                    elif multiplier_val is None:
+                        mult = ""
                     else:
                         mult = f"{multiplier_val}x"
 

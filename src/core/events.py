@@ -71,6 +71,9 @@ class EventHandlerMixin:
 
     def _on_assistant_message(self, event):
         """Capture the complete assistant message (streaming is disabled)."""
+        if event.agent_id:
+            # Subagent output: the main agent reports on it, like the CLI.
+            return
         content = getattr(event.data, "content", None)
         if content and self.current_callback:
             try:
@@ -415,7 +418,7 @@ class EventHandlerMixin:
 
     def _on_assistant_message_delta(self, event):
         """Token-by-token streaming delta — forward to delta_callback when streaming enabled."""
-        if not self.delta_callback:
+        if not self.delta_callback or event.agent_id:
             return
         content = getattr(event.data, "delta_content", None) or getattr(
             event.data, "content", None

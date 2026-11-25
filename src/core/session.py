@@ -881,7 +881,17 @@ class SessionMixin:
             }
         else:
             display_name = getattr(request, "tool_name", None) or kind
-            display_args = getattr(request, "args", None) or {}
+            # Requests deferred by the pre_tool_use hook ("ask") arrive as
+            # kind="hook" and carry the arguments in tool_args, not args.
+            raw_args = (
+                getattr(request, "args", None)
+                or getattr(request, "tool_args", None)
+                or {}
+            )
+            # apply_patch and similar tools send a plain string.
+            display_args = (
+                raw_args if isinstance(raw_args, dict) else {"input": raw_args}
+            )
 
         _denied = _permission_result("user-not-available")
 

@@ -401,9 +401,8 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     for m in models_data:
         m_id = m.get("id", "unknown")
         mult = m.get("multiplier", "1x")
-        btns.append(
-            InlineKeyboardButton(f"({mult}) {m_id}", callback_data=f"model:{m_id}")
-        )
+        label = f"({mult}) {m_id}" if mult else m_id
+        btns.append(InlineKeyboardButton(label, callback_data=f"model:{m_id}"))
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
 

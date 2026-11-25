@@ -17,6 +17,10 @@ from src.handlers.utils import security_check, check_project_selected
 
 logger = logging.getLogger(__name__)
 
+# Characters of a tool call shown in a permission prompt (Telegram caps a
+# message at 4096).
+_PERMISSION_ARGS_PREVIEW = 1500
+
 _PLAN_PROMPT = (
     "You are in PLAN MODE. Create a clear, actionable plan — do NOT write code.\n\n"
     "1. Research the necessary information.\n"
@@ -205,11 +209,18 @@ async def chat_handler(
             # Plain text permission request (no markdown)
             msg_text = f"🛡️ Permission: {tool_name}"
 
-            # Add args preview if present
-            if args and len(str(args)) > 0:
-                args_preview = str(args)[:80]
-                suffix = "..." if len(str(args)) > 80 else ""
-                msg_text += f"\nArguments: {args_preview}{suffix}"
+            # Show what is being approved. Prefer the bare command or patch
+            # over the dict repr, and keep enough of it to judge the call.
+            if args:
+                shown = (
+                    args.get("command") or args.get("input") or str(args)
+                    if isinstance(args, dict)
+                    else str(args)
+                )
+                shown = str(shown)
+                limit = _PERMISSION_ARGS_PREVIEW
+                suffix = "\n… (truncated)" if len(shown) > limit else ""
+                msg_text += f"\nArguments:\n{shown[:limit]}{suffix}"
 
             msg_text += "\n\nAllow?"
             # Store tool_name in interaction_data for later reference
