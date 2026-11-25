@@ -87,7 +87,8 @@ class EventHandlerMixin:
             )
             args = event.data.arguments
             tool_call_id = getattr(event.data, "tool_call_id", None)
-            parent_tool_call_id = getattr(event.data, "parent_tool_call_id", None)
+            # Subagent events carry the subagent's agent_id; top-level ones None.
+            subagent_id = event.agent_id
 
             if tool_call_id and tool_name != "unknown":
                 self._tool_call_names[tool_call_id] = tool_name
@@ -98,9 +99,9 @@ class EventHandlerMixin:
 
             # Log tool names and call IDs at INFO; full args only at DEBUG
             # to avoid leaking sensitive content (file_text, secrets) to log files.
-            args_keys = list((args or {}).keys())
+            args_keys = list(args.keys()) if isinstance(args, dict) else []
             logger.info(
-                f"TOOL START: {tool_name} call_id={tool_call_id} parent={parent_tool_call_id} args_keys={args_keys}"
+                f"TOOL START: {tool_name} call_id={tool_call_id} agent={subagent_id} args_keys={args_keys}"
             )
             logger.debug(
                 f"TOOL START args: {tool_name} call_id={tool_call_id} args={args}"
@@ -109,7 +110,7 @@ class EventHandlerMixin:
             # Skip child tool events (those inside subagents) to match CLI
             # behavior — the CLI only shows agent lifecycle, not individual
             # view/grep/bash calls within each agent.
-            if parent_tool_call_id:
+            if subagent_id:
                 return
 
             # Only surface write-type tools + intent reporting; suppress
@@ -135,7 +136,8 @@ class EventHandlerMixin:
             if not tool_name:
                 tool_name = "unknown"
 
-            parent_tool_call_id = getattr(event.data, "parent_tool_call_id", None)
+            # Subagent events carry the subagent's agent_id; top-level ones None.
+            subagent_id = event.agent_id
             result = getattr(event.data, "result", None)
             result_content = (
                 result.content if result and hasattr(result, "content") else None
@@ -174,7 +176,7 @@ class EventHandlerMixin:
             )
             if msg and ctx.status_callback:
                 # Skip child tool completions (inside subagents) to match CLI.
-                if parent_tool_call_id:
+                if subagent_id:
                     return
                 self._dispatch_async(ctx.status_callback, msg)
         except Exception as e:

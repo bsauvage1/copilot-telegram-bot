@@ -1,5 +1,16 @@
 # github-copilot-sdk 2.0.0 upgrade audit
 
+> **Status (2026-11-25): migrated.** The SDK was renamed on PyPI to
+> `microsoft-copilot-sdk` (2.0.0 is its first release; `github-copilot-sdk`
+> stops at 1.0.35 and is deprecated). The bot now pins
+> `microsoft-copilot-sdk==2.0.2`. CLI selection kept its design (system CLI
+> first, SDK-pinned CLI as fallback) on an explicit spawned stdio runtime,
+> instead of the in-process default suggested below. Extra breakages found
+> during the migration: `assistant.usage` `duration` is a `timedelta`;
+> `parent_tool_call_id` is gone from event data (use `event.agent_id`);
+> the CLI cache moved to `~/.cache/copilot-sdk`; the SDK repo moved to
+> `microsoft/copilot-sdk`.
+
 Audited 2026-11-18 against the `v2.0.0` tag of `github/copilot-sdk`
 (`python/` sources, release notes). The Python wheel is not on PyPI yet;
 PyPI latest is 1.0.34.
@@ -116,7 +127,7 @@ in-process transport, or switch to `session.rpc.mode.set/get`.
 ## Suggested upgrade order
 
 1. ~~Fix the 1.0.34 breakages above.~~ Done 2026-11-18.
-2. When 2.0.0 lands on PyPI: `uv add "github-copilot-sdk==2.0.0"`.
+2. ~~Switch packages~~: `uv remove github-copilot-sdk && uv add "microsoft-copilot-sdk==2.0.2"`. Done 2026-11-25.
 3. Rewrite `_build_client_kwargs` / `_create_client` (mode, runtime,
    github) and decide the CLI-selection design.
 4. Regroup create/resume kwargs per the table; titler too.

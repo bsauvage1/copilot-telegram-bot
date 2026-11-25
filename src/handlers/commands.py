@@ -152,19 +152,19 @@ async def _get_latest_versions() -> dict[str, str]:
             "cli_latest": "unknown",
             "sdk_latest": "unknown",
             "cli_release_url": "https://github.com/github/copilot-cli/releases",
-            "sdk_release_url": "https://github.com/github/copilot-sdk/releases",
+            "sdk_release_url": "https://github.com/microsoft/copilot-sdk/releases",
         }
 
         cli_task = _fetch_json(
             "https://api.github.com/repos/github/copilot-cli/releases/latest"
         )
         sdk_release_task = _fetch_json(
-            "https://api.github.com/repos/github/copilot-sdk/releases/latest"
+            "https://api.github.com/repos/microsoft/copilot-sdk/releases/latest"
         )
         sdk_releases_task = _fetch_json(
-            "https://api.github.com/repos/github/copilot-sdk/releases?per_page=100"
+            "https://api.github.com/repos/microsoft/copilot-sdk/releases?per_page=100"
         )
-        sdk_pypi_task = _fetch_json("https://pypi.org/pypi/github-copilot-sdk/json")
+        sdk_pypi_task = _fetch_json("https://pypi.org/pypi/microsoft-copilot-sdk/json")
 
         cli_json, sdk_release_json, sdk_releases_json, sdk_pypi_json = (
             await asyncio.gather(
@@ -204,7 +204,7 @@ async def _get_latest_versions() -> dict[str, str]:
                 latest["sdk_release_url"] = (
                     matching.get("html_url")
                     if matching and matching.get("html_url")
-                    else f"https://github.com/github/copilot-sdk/releases/tag/{tag}"
+                    else f"https://github.com/microsoft/copilot-sdk/releases/tag/{tag}"
                 )
 
         if latest["sdk_latest"] == "unknown" and sdk_releases:
@@ -215,7 +215,7 @@ async def _get_latest_versions() -> dict[str, str]:
                 latest["sdk_latest"] = _extract_version(canonical_tag)
                 latest["sdk_release_url"] = (
                     canonical.get("html_url")
-                    or f"https://github.com/github/copilot-sdk/releases/tag/{canonical_tag}"
+                    or f"https://github.com/microsoft/copilot-sdk/releases/tag/{canonical_tag}"
                 )
 
         if latest["sdk_latest"] == "unknown" and isinstance(sdk_release_json, dict):
@@ -223,7 +223,7 @@ async def _get_latest_versions() -> dict[str, str]:
             latest["sdk_latest"] = sdk_version
             if sdk_version != "unknown":
                 latest["sdk_release_url"] = (
-                    f"https://github.com/github/copilot-sdk/releases/tag/v{sdk_version}"
+                    f"https://github.com/microsoft/copilot-sdk/releases/tag/v{sdk_version}"
                 )
             else:
                 latest["sdk_release_url"] = (
@@ -245,7 +245,7 @@ async def _get_latest_versions() -> dict[str, str]:
 
 _REPO_MAP = {
     "cli": "github/copilot-cli",
-    "sdk": "github/copilot-sdk",
+    "sdk": "microsoft/copilot-sdk",
 }
 
 
@@ -429,7 +429,7 @@ async def _get_version_snapshot() -> dict[str, Any]:
             "github/copilot-cli", used_cli, latest["cli_latest"]
         ),
         "sdk_compare_url": _make_compare_url(
-            "github/copilot-sdk", sdk_installed, latest["sdk_latest"]
+            "microsoft/copilot-sdk", sdk_installed, latest["sdk_latest"]
         ),
     }
 
@@ -481,7 +481,7 @@ async def _build_versions_panel() -> tuple[str, InlineKeyboardMarkup]:
         target = (
             html.escape(s["sdk_latest"]) if s["sdk_latest"] != "unknown" else "latest"
         )
-        cmds.append(f'<code>uv add "github-copilot-sdk=={target}"</code>')
+        cmds.append(f'<code>uv add "microsoft-copilot-sdk=={target}"</code>')
     if cmds:
         cmds.append("<code>sudo systemctl restart copilot-bot</code>")
         lines.append("")
@@ -524,7 +524,7 @@ def _get_sdk_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("github-copilot-sdk")
+        return version("microsoft-copilot-sdk")
     except Exception:
         return "unknown"
 
@@ -1596,7 +1596,7 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ping = await service.client.ping()
         auth = await service.client.get_auth_status()
         login = auth.login or "unknown"
-        authenticated = "✅" if auth.isAuthenticated else "❌"
+        authenticated = "✅" if auth.is_authenticated else "❌"
         await msg.edit_text(
             f"🟢 Copilot CLI Status\n"
             f"• Connection: connected\n"

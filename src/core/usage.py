@@ -3,7 +3,7 @@
 import time
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict
 
 from copilot.session_events import SessionEventType
@@ -141,7 +141,11 @@ class SessionUsageTracker:
             )
             usage.cost += float(getattr(event.data, "cost", 0) or 0)
             usage.requests += 1
-            usage.api_duration_ms += int(getattr(event.data, "duration", 0) or 0)
+            duration = getattr(event.data, "duration", None)
+            if isinstance(duration, timedelta):
+                usage.api_duration_ms += int(duration.total_seconds() * 1000)
+            elif duration:
+                usage.api_duration_ms += int(duration)
 
             # Update quota snapshots and parse into QuotaUsage
             snapshots = getattr(event.data, "quota_snapshots", None)

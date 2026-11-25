@@ -213,12 +213,20 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     def _build_client_kwargs(
         self, cwd: Path, cli_path: Optional[str] = None
     ) -> dict[str, Any]:
-        """Build CopilotClient kwargs for a given cwd and optional CLI path."""
-        kwargs: dict[str, Any] = {"working_directory": str(cwd)}
+        """Build CopilotClient kwargs for a given cwd and optional CLI path.
+
+        Always a spawned stdio runtime: the SDK default is in-process, which
+        rejects a per-client working directory. ``cli_path=None`` spawns the
+        SDK-pinned CLI.
+        """
+        kwargs: dict[str, Any] = {
+            "mode": "coding-agent",
+            "runtime": RuntimeConnection.for_spawned_stdio(
+                path=cli_path, working_directory=str(cwd)
+            ),
+        }
         if GITHUB_TOKEN:
-            kwargs["github_token"] = GITHUB_TOKEN
-        if cli_path:
-            kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
+            kwargs["github"] = {"token": GITHUB_TOKEN}
         return kwargs
 
     def _discover_system_cli_path(self) -> Optional[str]:
@@ -235,40 +243,31 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     def _discover_bundled_cli_path(self, download: bool = False) -> Optional[str]:
         """Return the SDK-pinned Copilot CLI path if available.
 
-        Older SDKs ship the CLI inside the wheel (``_get_bundled_cli_path``).
-        SDK >= 1.0.32 instead pins a CLI version and downloads it into
-        ``~/.cache/github-copilot-sdk``; ``download=True`` fetches it on
-        first use, otherwise only an existing cache entry is returned.
+        The SDK pins a CLI version and downloads it into
+        ``~/.cache/copilot-sdk``; ``download=True`` fetches it on first use,
+        otherwise only an existing cache entry is returned.
         """
         try:
-            from copilot.client import _get_bundled_cli_path
+            from copilot import _cli_download
 
-            bundled_cli = _get_bundled_cli_path()
-        except ImportError:
-            try:
-                from copilot import _cli_download
-
-                if download:
-                    bundled_cli = _cli_download.ensure_runtime_wrapper()
-                else:
-                    # get_cached_cli_path() looks for a `copilot` binary the
-                    # runtime bundle doesn't ship; check the wrapper directly.
-                    pair_dir = (
-                        _cli_download.get_cache_dir(_cli_download.CLI_VERSION)
-                        / "prebuilds"
-                        / _cli_download.get_runtime_platform()
-                    )
-                    wrapper = pair_dir / "copilot-runtime"
-                    bundled_cli = (
-                        str(wrapper)
-                        if wrapper.is_file() and (pair_dir / "runtime.node").is_file()
-                        else None
-                    )
-            except Exception as e:
-                logger.debug(f"Could not resolve SDK-pinned CLI path: {e}")
-                return None
+            if download:
+                bundled_cli = _cli_download.ensure_runtime_wrapper()
+            else:
+                # get_cached_cli_path() looks for a `copilot` binary the
+                # runtime bundle doesn't ship; check the wrapper directly.
+                pair_dir = (
+                    _cli_download.get_cache_dir(_cli_download.CLI_VERSION)
+                    / "prebuilds"
+                    / _cli_download.get_runtime_platform()
+                )
+                wrapper = pair_dir / "copilot-runtime"
+                bundled_cli = (
+                    str(wrapper)
+                    if wrapper.is_file() and (pair_dir / "runtime.node").is_file()
+                    else None
+                )
         except Exception as e:
-            logger.debug(f"Could not resolve bundled CLI path: {e}")
+            logger.debug(f"Could not resolve SDK-pinned CLI path: {e}")
             return None
 
         if bundled_cli and os.path.isfile(bundled_cli):

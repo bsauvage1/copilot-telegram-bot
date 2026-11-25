@@ -179,7 +179,7 @@ def _patch_session_attachments(session_id: str) -> None:
 
 
 def _apply_agent_config(svc, cfg: dict) -> None:
-    """Inject config_directory and custom_agents into a session config dict.
+    """Inject config_directory and custom agents into a session config dict.
 
     Always registers all installed agents so the CLI binary includes them in
     the task tool's agent_type enum (required since SDK v0.1.28 — configDir
@@ -224,7 +224,7 @@ def _apply_agent_config(svc, cfg: dict) -> None:
         )
 
     if wire_agents:
-        cfg["custom_agents"] = wire_agents
+        cfg["agents"] = {"definitions": wire_agents}
         selected_info = svc.selected_agent or "none selected"
         logger.info(
             f"Custom agents registered: {len(wire_agents)} (selected: {selected_info})"
@@ -517,28 +517,35 @@ class SessionMixin:
 
         resume_config = {
             "model": model,
-            "streaming": self.streaming_enabled,
-            "on_permission_request": self._on_permission_request,
+            "events": {"streaming": self.streaming_enabled},
+            "permissions": {"on_request": self._on_permission_request},
             "hooks": {
-                "on_pre_tool_use": self._permission_bridge,
-                "on_session_end": _guarded_session_end,
+                "handlers": {
+                    "on_pre_tool_use": self._permission_bridge,
+                    "on_session_end": _guarded_session_end,
+                }
             },
-            "on_user_input_request": self._user_input_bridge,
+            "interaction": {"on_user_input_request": self._user_input_bridge},
         }
         if self.current_reasoning_effort:
-            resume_config["reasoning_effort"] = self.current_reasoning_effort
+            resume_config["inference"] = {
+                "reasoning_effort": self.current_reasoning_effort
+            }
 
         mcp_servers = get_enabled_servers()
         if mcp_servers:
-            resume_config["mcp_servers"] = mcp_servers
+            resume_config["mcp"] = {"servers": mcp_servers}
             logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
 
+        skills: dict = {}
         skill_dirs = get_skill_dirs_for_session(str(ctx.root_path))
         if skill_dirs:
-            resume_config["skill_directories"] = skill_dirs
+            skills["directories"] = skill_dirs
         disabled = get_disabled_skills()
         if disabled:
-            resume_config["disabled_skills"] = disabled
+            skills["disabled_skills"] = disabled
+        if skills:
+            resume_config["skills"] = skills
 
         _apply_agent_config(self, resume_config)
 
@@ -645,13 +652,15 @@ class SessionMixin:
             return await self._on_session_end(input_data, invocation)
 
         session_config = {
-            "streaming": self.streaming_enabled,
-            "on_permission_request": self._on_permission_request,
+            "events": {"streaming": self.streaming_enabled},
+            "permissions": {"on_request": self._on_permission_request},
             "hooks": {
-                "on_pre_tool_use": self._permission_bridge,
-                "on_session_end": _guarded_session_end,
+                "handlers": {
+                    "on_pre_tool_use": self._permission_bridge,
+                    "on_session_end": _guarded_session_end,
+                }
             },
-            "on_user_input_request": self._user_input_bridge,
+            "interaction": {"on_user_input_request": self._user_input_bridge},
             "system_message": {
                 "mode": "append",
                 "content": (
@@ -688,30 +697,35 @@ class SessionMixin:
             session_config["system_message"]["content"] += f"\n\n{agents_ctx}"
             logger.info("Custom agents list injected into system message")
         if self.current_reasoning_effort:
-            session_config["reasoning_effort"] = self.current_reasoning_effort
+            session_config["inference"] = {
+                "reasoning_effort": self.current_reasoning_effort
+            }
         if self.infinite_sessions_enabled:
-            session_config["infinite_sessions"] = {"enabled": True}
+            session_config["state"] = {"infinite_sessions": {"enabled": True}}
 
         mcp_servers = get_enabled_servers()
         if mcp_servers:
-            session_config["mcp_servers"] = mcp_servers
+            session_config["mcp"] = {"servers": mcp_servers}
             logger.info(f"MCP servers loaded: {list(mcp_servers.keys())}")
 
+        skills: dict = {}
         skill_dirs = get_skill_dirs_for_session(str(ctx.root_path))
         if skill_dirs:
-            session_config["skill_directories"] = skill_dirs
+            skills["directories"] = skill_dirs
             logger.info(f"Skill directories: {skill_dirs}")
         disabled = get_disabled_skills()
         if disabled:
-            session_config["disabled_skills"] = disabled
+            skills["disabled_skills"] = disabled
             logger.info(f"Disabled skills: {disabled}")
+        if skills:
+            session_config["skills"] = skills
 
         _apply_agent_config(self, session_config)
         try:
             self.session = await self.client.create_session(**session_config)
         except Exception as e:
             if not (
-                "reasoning_effort" in session_config
+                "inference" in session_config
                 and _is_reasoning_unsupported_error(e)
             ):
                 raise
@@ -730,9 +744,12 @@ class SessionMixin:
             self.current_model = None
             self._prefer_cli_default_model = True
             self.save_prefs()
-            retry_config = dict(session_config)
-            retry_config.pop("reasoning_effort", None)
-            retry_config.pop("model", None)
+            # inference holds only reasoning_effort, so drop the group.
+            retry_config = {
+                k: v
+                for k, v in session_config.items()
+                if k not in ("inference", "model")
+            }
             self.session = await self.client.create_session(**retry_config)
             model = None
             self._pending_runtime_warning = (
@@ -964,7 +981,7 @@ class SessionMixin:
         # The "ask" permissionDecision value was introduced in SDK ≥0.1.28.
         # If the SDK is downgraded below that version this return value will
         # silently fall-through to allow, creating a fail-open security hole.
-        # Always pin github-copilot-sdk in pyproject.toml to a version that
+        # Always pin microsoft-copilot-sdk in pyproject.toml to a version that
         # supports "ask".
         logger.info(f"🔔 Deferring to permission system for tool: {tool_name}")
         return {"permissionDecision": "ask"}

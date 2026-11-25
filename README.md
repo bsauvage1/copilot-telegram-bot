@@ -2,7 +2,7 @@
 
 **Take GitHub Copilot anywhere on Telegram.**
 
-Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
+Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `microsoft-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![SDK](https://img.shields.io/badge/Copilot%20SDK-0.2.0-black)
@@ -195,7 +195,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/update` | Update the Copilot CLI binary. |
 
 ## 🔧 Under the Hood
-This bot is built on top of the **`github-copilot-sdk`**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
+This bot is built on top of the **`microsoft-copilot-sdk`**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async queue bridge.
 - **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery—translating SDK states into Telegram interactions seamlessly.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
